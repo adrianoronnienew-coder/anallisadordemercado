@@ -72,14 +72,13 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
     meta: [
       { charSet: "utf-8" },
       { name: "viewport", content: "width=device-width, initial-scale=1" },
-      { title: "Lovable App" },
-      { name: "description", content: "Lovable Generated Project" },
-      { name: "author", content: "Lovable" },
-      { property: "og:title", content: "Lovable App" },
-      { property: "og:description", content: "Lovable Generated Project" },
+      { title: "Voss Academy - Domine IA e No-Code" },
+      { name: "description", content: "Aprenda a criar sites, apps, e-commerces e qualquer aplicação usando IA e ferramentas no-code. Sem programar. Resultados em até 14 dias." },
+      { name: "author", content: "Voss Academy" },
+      { property: "og:title", content: "Voss Academy - Domine IA e No-Code" },
+      { property: "og:description", content: "Aprenda a criar sites, apps e qualquer aplicação usando IA. Resultados em até 14 dias." },
       { property: "og:type", content: "website" },
-      { name: "twitter:card", content: "summary" },
-      { name: "twitter:site", content: "@Lovable" },
+      { name: "twitter:card", content: "summary_large_image" },
     ],
     links: [
       {
