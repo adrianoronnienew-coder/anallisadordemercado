@@ -28,21 +28,23 @@ export const analyzeFrame = createServerFn({ method: "POST" })
       ? `\n\nAPRENDIZADO DE ORDENS ANTERIORES (evite repetir esses erros):\n${data.lessons}`
       : "";
 
-    const prompt = `Você é um trader profissional de opções binárias de ${data.timeframe} com 15 anos de experiência em price action puro. Sua reputação depende de acertar. Prefira PERDER uma oportunidade a dar um sinal ruim.
+    const prompt = `Você é um trader profissional de opções binárias de ${data.timeframe} com 15 anos de experiência em price action. Prefira PERDER uma oportunidade a dar sinal ruim.
 
-Analise o gráfico de candles na imagem seguindo este checklist RIGOROSO, candle por candle:
+ATENÇÃO OTC: Se o ativo terminar em "OTC" (mercado sintético da corretora, típico de fim de semana), o preço é gerado pela corretora e reverte contra movimentos aparentemente óbvios. Em OTC exija setup EXTRA claro e desconfie de rompimentos "fortes" — costumam ser armadilhas.
 
-1. TENDÊNCIA: Os últimos 8-12 candles mostram sequência clara de topos/fundos ascendentes (alta) ou descendentes (baixa)? Ou está lateralizado?
-2. ÚLTIMOS 3 CANDLES: Qual a cor, tamanho do corpo e pavios? Há rejeição (pavio longo)? Doji? Engolfo?
-3. MOMENTUM: O candle mais recente confirma a direção com corpo forte, ou está enfraquecendo?
-4. CONTEXTO: Rompimento de suporte/resistência? Pullback numa tendência forte? Exaustão?
-5. CONTRA-SINAIS: Há divergência, pavio de rejeição contra a direção pretendida, ou candle indeciso?
+Checklist RIGOROSO:
+1. TENDÊNCIA (últimos 10-15 candles): topos/fundos ascendentes, descendentes, ou lateral?
+2. ÚLTIMOS 3 CANDLES: cor, corpo, pavios. Rejeição/Doji/Engolfo?
+3. MOMENTUM: candle atual confirma direção com corpo forte, ou enfraquece?
+4. CONTEXTO: rompimento confirmado de S/R, pullback saudável, ou exaustão/reversão?
+5. CONTRA-SINAIS: divergências, pavios contrários, indecisão? → WAIT.
+6. NÃO opere reversões contra tendência forte sem 2+ candles de confirmação.
 
-REGRAS DE DECISÃO (SEJA SELETIVO, MAS NÃO PARALISADO):
-- Emita CALL quando: tendência de alta ou reversão de baixa clara + candle atual verde com corpo dominante + sem pavio superior grande contrário. Confidence mínimo 68.
-- Emita PUT quando: tendência de baixa ou reversão de alta clara + candle atual vermelho com corpo dominante + sem pavio inferior grande contrário. Confidence mínimo 68.
-- Em mercado totalmente lateral, doji puro, ou sinais conflitantes → WAIT.
-- Busque oportunidades ativamente: em ~1 minuto de gráfico costuma haver ao menos um setup razoável. Não seja excessivamente conservador.${statsBlock}${lessonsBlock}
+REGRAS:
+- CALL: tendência de alta clara + candle atual verde com corpo dominante (>60% do range) + sem pavio superior grande + momentum crescente. Confidence mínimo 72.
+- PUT: tendência de baixa clara + candle atual vermelho com corpo dominante + sem pavio inferior grande + momentum crescente. Confidence mínimo 72.
+- Lateral, doji, candle pequeno, próximo de S/R sem definição, sinais mistos, OTC ambíguo → WAIT.
+- Na dúvida, SEMPRE WAIT. Melhor 10 WAITs do que 1 LOSS.${statsBlock}${lessonsBlock}
 
 Retorne APENAS um JSON válido (sem markdown, sem \`\`\`):
 {"signal":"CALL"|"PUT"|"WAIT","confidence":0-100,"reason":"máx 14 palavras em português explicando o setup"}`;
