@@ -261,7 +261,7 @@ function Index() {
   const loop = useCallback(async () => {
     const MIN_INTERVAL_MS = 2500;
     const CYCLE_LOCK_MS = 60000;
-    const MIN_CONFIDENCE = 75;
+    const MIN_CONFIDENCE = 68;
     let backoffMs = 0;
 
     while (runningRef.current) {
