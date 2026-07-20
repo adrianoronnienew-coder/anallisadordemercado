@@ -113,9 +113,21 @@ function Index() {
 
   const loop = useCallback(async () => {
     const MIN_INTERVAL_MS = 2500; // throttle p/ respeitar rate limit do gateway
+    const CYCLE_LOCK_MS = 60000; // trava de 60s após CALL/PUT (ciclo M1)
+    const MIN_CONFIDENCE = 75;
     let backoffMs = 0;
     while (runningRef.current) {
       const cycleStart = Date.now();
+
+      // Trava de ciclo: enquanto sinal ativo, só decrementa contador
+      if (lockUntilRef.current > Date.now()) {
+        const remaining = Math.ceil((lockUntilRef.current - Date.now()) / 1000);
+        setLockRemaining(remaining);
+        await new Promise((r) => setTimeout(r, 500));
+        continue;
+      }
+      if (lockRemaining !== 0) setLockRemaining(0);
+
       const frame = captureFrame();
       if (!frame) {
         await new Promise((r) => setTimeout(r, 200));
@@ -127,21 +139,33 @@ function Index() {
         setAnalyzing(false);
         setError(null);
         backoffMs = 0;
+
+        // Downgrade abaixo do threshold — vira WAIT
+        const signal: SignalKind =
+          res.signal !== "WAIT" && res.confidence < MIN_CONFIDENCE ? "WAIT" : res.signal;
+
         const row: SignalRow = {
           id: crypto.randomUUID(),
           ts: Date.now(),
-          signal: res.signal,
+          signal,
           confidence: res.confidence,
-          reason: res.reason,
+          reason: signal === "WAIT" && res.signal !== "WAIT"
+            ? `Confiança baixa (${res.confidence}%) — aguardando setup mais claro`
+            : res.reason,
           latencyMs: res.latencyMs,
         };
         setCurrent(row);
         setHistory((h) => [row, ...h].slice(0, 30));
-        if (res.confidence >= 65 && res.signal !== "WAIT" && lastAlertRef.current !== res.signal) {
-          beep(res.signal);
-          lastAlertRef.current = res.signal;
+
+        if (signal !== "WAIT" && res.confidence >= MIN_CONFIDENCE) {
+          beep(signal);
+          lastAlertRef.current = signal;
+          // Trava de ciclo — aguarda o M1 fechar antes de nova análise
+          lockUntilRef.current = Date.now() + CYCLE_LOCK_MS;
+          setLockRemaining(Math.ceil(CYCLE_LOCK_MS / 1000));
+        } else {
+          lastAlertRef.current = null;
         }
-        if (res.signal === "WAIT") lastAlertRef.current = null;
       } catch (e: any) {
         setAnalyzing(false);
         const msg = String(e?.message ?? "");
@@ -161,10 +185,7 @@ function Index() {
         await new Promise((r) => setTimeout(r, MIN_INTERVAL_MS - elapsed));
       }
     }
-  }, [analyze, beep, captureFrame]);
-
-  const toggleRun = useCallback(() => {
-    if (running) {
+  }, [analyze, beep, captureFrame, lockRemaining]);
       runningRef.current = false;
       setRunning(false);
       return;
