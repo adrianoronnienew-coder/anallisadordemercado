@@ -33,6 +33,7 @@ function Index() {
   const runningRef = useRef(false);
   const soundRef = useRef(true);
   const lastAlertRef = useRef<SignalKind | null>(null);
+  const lockUntilRef = useRef<number>(0);
 
   const [sharing, setSharing] = useState(false);
   const [running, setRunning] = useState(false);
@@ -41,6 +42,7 @@ function Index() {
   const [history, setHistory] = useState<SignalRow[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [analyzing, setAnalyzing] = useState(false);
+  const [lockRemaining, setLockRemaining] = useState(0);
 
   useEffect(() => {
     soundRef.current = sound;
@@ -111,9 +113,21 @@ function Index() {
 
   const loop = useCallback(async () => {
     const MIN_INTERVAL_MS = 2500; // throttle p/ respeitar rate limit do gateway
+    const CYCLE_LOCK_MS = 60000; // trava de 60s após CALL/PUT (ciclo M1)
+    const MIN_CONFIDENCE = 75;
     let backoffMs = 0;
     while (runningRef.current) {
       const cycleStart = Date.now();
+
+      // Trava de ciclo: enquanto sinal ativo, só decrementa contador
+      if (lockUntilRef.current > Date.now()) {
+        const remaining = Math.ceil((lockUntilRef.current - Date.now()) / 1000);
+        setLockRemaining(remaining);
+        await new Promise((r) => setTimeout(r, 500));
+        continue;
+      }
+      if (lockRemaining !== 0) setLockRemaining(0);
+
       const frame = captureFrame();
       if (!frame) {
         await new Promise((r) => setTimeout(r, 200));
@@ -125,21 +139,33 @@ function Index() {
         setAnalyzing(false);
         setError(null);
         backoffMs = 0;
+
+        // Downgrade abaixo do threshold — vira WAIT
+        const signal: SignalKind =
+          res.signal !== "WAIT" && res.confidence < MIN_CONFIDENCE ? "WAIT" : res.signal;
+
         const row: SignalRow = {
           id: crypto.randomUUID(),
           ts: Date.now(),
-          signal: res.signal,
+          signal,
           confidence: res.confidence,
-          reason: res.reason,
+          reason: signal === "WAIT" && res.signal !== "WAIT"
+            ? `Confiança baixa (${res.confidence}%) — aguardando setup mais claro`
+            : res.reason,
           latencyMs: res.latencyMs,
         };
         setCurrent(row);
         setHistory((h) => [row, ...h].slice(0, 30));
-        if (res.confidence >= 65 && res.signal !== "WAIT" && lastAlertRef.current !== res.signal) {
-          beep(res.signal);
-          lastAlertRef.current = res.signal;
+
+        if (signal !== "WAIT" && res.confidence >= MIN_CONFIDENCE) {
+          beep(signal);
+          lastAlertRef.current = signal;
+          // Trava de ciclo — aguarda o M1 fechar antes de nova análise
+          lockUntilRef.current = Date.now() + CYCLE_LOCK_MS;
+          setLockRemaining(Math.ceil(CYCLE_LOCK_MS / 1000));
+        } else {
+          lastAlertRef.current = null;
         }
-        if (res.signal === "WAIT") lastAlertRef.current = null;
       } catch (e: any) {
         setAnalyzing(false);
         const msg = String(e?.message ?? "");
@@ -159,7 +185,7 @@ function Index() {
         await new Promise((r) => setTimeout(r, MIN_INTERVAL_MS - elapsed));
       }
     }
-  }, [analyze, beep, captureFrame]);
+  }, [analyze, beep, captureFrame, lockRemaining]);
 
   const toggleRun = useCallback(() => {
     if (running) {
@@ -171,6 +197,8 @@ function Index() {
     runningRef.current = true;
     setRunning(true);
     lastAlertRef.current = null;
+    lockUntilRef.current = 0;
+    setLockRemaining(0);
     void loop();
   }, [running, sharing, loop]);
 
@@ -276,7 +304,7 @@ function Index() {
 
         {/* Sinal atual + histórico */}
         <aside className="col-span-12 lg:col-span-4 space-y-4">
-          <CurrentSignal row={current} analyzing={analyzing} />
+          <CurrentSignal row={current} analyzing={analyzing} lockRemaining={lockRemaining} />
           <div className="rounded-xl bg-white/[0.03] border border-white/10 p-4">
             <h3 className="text-xs font-semibold uppercase tracking-wider text-white/50 mb-3">
               Histórico
@@ -302,7 +330,15 @@ function Index() {
   );
 }
 
-function CurrentSignal({ row, analyzing }: { row: SignalRow | null; analyzing: boolean }) {
+function CurrentSignal({
+  row,
+  analyzing,
+  lockRemaining,
+}: {
+  row: SignalRow | null;
+  analyzing: boolean;
+  lockRemaining: number;
+}) {
   if (!row) {
     return (
       <div className="rounded-xl bg-white/[0.03] border border-white/10 p-6 text-center">
@@ -342,6 +378,12 @@ function CurrentSignal({ row, analyzing }: { row: SignalRow | null; analyzing: b
         />
       </div>
       <p className="mt-3 text-sm text-white/70">{row.reason}</p>
+      {lockRemaining > 0 && (isCall || isPut) && (
+        <div className="mt-4 flex items-center justify-between rounded-lg bg-black/40 border border-white/10 px-3 py-2">
+          <span className="text-xs uppercase tracking-wider text-white/50">Aguardando fechamento M1</span>
+          <span className={`text-lg font-bold tabular-nums ${color}`}>{lockRemaining}s</span>
+        </div>
+      )}
     </div>
   );
 }
