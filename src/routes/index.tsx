@@ -453,6 +453,21 @@ function Index() {
                 </Button>
               </div>
             )}
+            {sharing && (
+              <>
+                {/* Scanning sweep overlay */}
+                <div className="pointer-events-none absolute inset-0 overflow-hidden">
+                  {running && (
+                    <div className="absolute inset-x-0 h-24 -top-24 bg-gradient-to-b from-transparent via-emerald-400/20 to-transparent animate-scan" />
+                  )}
+                  {/* Corner brackets */}
+                  <div className="absolute top-2 left-2 h-6 w-6 border-t-2 border-l-2 border-emerald-400/60" />
+                  <div className="absolute top-2 right-2 h-6 w-6 border-t-2 border-r-2 border-emerald-400/60" />
+                  <div className="absolute bottom-2 left-2 h-6 w-6 border-b-2 border-l-2 border-emerald-400/60" />
+                  <div className="absolute bottom-2 right-2 h-6 w-6 border-b-2 border-r-2 border-emerald-400/60" />
+                </div>
+              </>
+            )}
             {analyzing && sharing && (
               <div className="absolute top-3 right-3 flex items-center gap-2 bg-black/70 backdrop-blur rounded-full px-3 py-1.5 text-xs">
                 <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
