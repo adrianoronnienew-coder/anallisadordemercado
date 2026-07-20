@@ -85,6 +85,7 @@ function Index() {
   const statsRef = useRef<{ wins: number; losses: number }>({ wins: 0, losses: 0 });
   const pendingTradeRef = useRef<SignalRow | null>(null);
   const evaluateAtRef = useRef<number>(0);
+  const lastCandidateRef = useRef<{ signal: "CALL" | "PUT"; ts: number } | null>(null);
 
   const [sharing, setSharing] = useState(false);
   const [running, setRunning] = useState(false);
