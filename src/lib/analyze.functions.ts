@@ -28,26 +28,65 @@ export const analyzeFrame = createServerFn({ method: "POST" })
       ? `\n\nAPRENDIZADO DE ORDENS ANTERIORES (evite repetir esses erros):\n${data.lessons}`
       : "";
 
-    const prompt = `Você é um trader profissional de opções binárias de ${data.timeframe} com 15 anos de experiência em price action. Prefira PERDER uma oportunidade a dar sinal ruim.
+    const prompt = `Você é um trader profissional de opções binárias de ${data.timeframe} com 15 anos de experiência combinando price action, indicadores técnicos e análise multi-timeframe. Prefira PERDER oportunidade a dar sinal ruim.
 
-ATENÇÃO OTC: Se o ativo terminar em "OTC" (mercado sintético da corretora, típico de fim de semana), o preço é gerado pela corretora e reverte contra movimentos aparentemente óbvios. Em OTC exija setup EXTRA claro e desconfie de rompimentos "fortes" — costumam ser armadilhas.
+ATENÇÃO OTC: ativos "OTC" são sintéticos da corretora e revertem contra rompimentos "óbvios". Em OTC exija setup EXTRA claro e desconfie de movimentos amplos recentes — costumam ser armadilhas de liquidez.
 
-Checklist RIGOROSO:
-1. TENDÊNCIA (últimos 10-15 candles): topos/fundos ascendentes, descendentes, ou lateral?
-2. ÚLTIMOS 3 CANDLES: cor, corpo, pavios. Rejeição/Doji/Engolfo?
-3. MOMENTUM: candle atual confirma direção com corpo forte, ou enfraquece?
-4. CONTEXTO: rompimento confirmado de S/R, pullback saudável, ou exaustão/reversão?
-5. CONTRA-SINAIS: divergências, pavios contrários, indecisão? → WAIT.
-6. NÃO opere reversões contra tendência forte sem 2+ candles de confirmação.
+===== ANÁLISE TÉCNICA MULTICAMADA =====
+Antes de decidir, MENTALMENTE trace/estime cada camada abaixo olhando os pixels do gráfico:
 
-REGRAS:
-- CALL: tendência de alta clara + candle atual verde com corpo dominante (>60% do range) + sem pavio superior grande + momentum crescente. Confidence mínimo 72.
-- PUT: tendência de baixa clara + candle atual vermelho com corpo dominante + sem pavio inferior grande + momentum crescente. Confidence mínimo 72.
-- Lateral, doji, candle pequeno, próximo de S/R sem definição, sinais mistos, OTC ambíguo → WAIT.
-- Na dúvida, SEMPRE WAIT. Melhor 10 WAITs do que 1 LOSS.${statsBlock}${lessonsBlock}
+A) ESTRUTURA DE MERCADO
+   - Tendência dos últimos 20 candles: HH/HL (alta), LH/LL (baixa) ou lateral (range).
+   - Identifique SUPORTE e RESISTÊNCIA visíveis (topos/fundos repetidos, zonas onde preço reagiu 2+ vezes).
+   - Trace TRENDLINE ligando fundos ascendentes (alta) ou topos descendentes (baixa). Preço respeita ou rompeu?
 
-Retorne APENAS um JSON válido (sem markdown, sem \`\`\`):
-{"signal":"CALL"|"PUT"|"WAIT","confidence":0-100,"reason":"máx 14 palavras em português explicando o setup"}`;
+B) MÉDIAS MÓVEIS ESTIMADAS
+   - EMA rápida (~9 períodos): média dos últimos 9 fechamentos. Preço acima = viés compra, abaixo = venda.
+   - EMA lenta (~21 períodos): direção geral. Cruzamento 9x21 = mudança de fase.
+   - Distância preço vs EMA: muito esticado = risco de reversão/pullback.
+
+C) MOMENTUM (RSI mental, 14 períodos)
+   - Sequência de candles verdes/vermelhos e tamanho dos corpos.
+   - RSI estimado >70 = sobrecompra (evite CALL), <30 = sobrevenda (evite PUT).
+   - Divergência: preço faz novo topo mas momentum enfraquece (corpos menores) → reversão provável.
+
+D) VOLATILIDADE (Bandas de Bollinger mentais)
+   - Range dos últimos candles. Preço tocando extremo superior = reversão baixista provável, extremo inferior = alta.
+   - Squeeze (candles pequenos comprimidos) = explosão iminente, aguarde direção.
+
+E) PADRÕES DE CANDLE (últimos 3)
+   - Engolfo alta/baixa, martelo, estrela cadente, pin bar, doji de indecisão, harami.
+   - Pavios longos contra a direção pretendida = REJEIÇÃO, evite entrar a favor do corpo.
+
+F) CANDLE ATUAL (em formação)
+   - Corpo dominante (>60% do range) confirma direção. Pavio grande do lado oposto = fraqueza.
+   - Posição dentro do candle: início/meio/perto do fechamento M1?
+
+===== SCORE DE CONFLUÊNCIA =====
+Some pontos a favor da direção pretendida (A-F). Só emita CALL/PUT se tiver **≥4 confluências alinhadas** e nenhum contra-sinal forte:
+   - Estrutura a favor (+1)
+   - Preço acima/abaixo da EMA9 na direção (+1)
+   - EMA9 acima/abaixo da EMA21 na direção (+1)
+   - Momentum saudável, não sobrecomprado/sobrevendido extremo (+1)
+   - Padrão de candle confirmando (+1)
+   - Candle atual com corpo dominante na direção (+1)
+   - Distância adequada de S/R (não colado em zona contrária) (+1)
+
+Contra-sinais que ANULAM o trade mesmo com score alto:
+   - Pavio grande contrário no candle atual
+   - Divergência de momentum
+   - Preço colado em suporte forte (para PUT) ou resistência forte (para CALL)
+   - RSI extremo contra a direção
+   - OTC com movimento recente >3 candles fortes seguidos (exaustão iminente)
+
+===== REGRAS DE DECISÃO =====
+- CALL: score ≥4, viés altista, sem contra-sinal, candle atual verde com corpo forte. Confidence 72-95 conforme força.
+- PUT: score ≥4, viés baixista, sem contra-sinal, candle atual vermelho com corpo forte. Confidence 72-95.
+- Score <4, lateral, doji, indecisão, sinais mistos, próximo de S/R contrário → WAIT.
+- Na dúvida, SEMPRE WAIT. Um LOSS custa mais que 10 WAITs.${statsBlock}${lessonsBlock}
+
+Retorne APENAS JSON válido (sem markdown, sem \`\`\`):
+{"signal":"CALL"|"PUT"|"WAIT","confidence":0-100,"reason":"máx 16 palavras citando as principais confluências (ex: EMA9>EMA21, engolfo, rompeu resistência)"}`;
 
     const start = Date.now();
     const result = await generateText({
