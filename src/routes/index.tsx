@@ -186,6 +186,9 @@ function Index() {
       }
     }
   }, [analyze, beep, captureFrame, lockRemaining]);
+
+  const toggleRun = useCallback(() => {
+    if (running) {
       runningRef.current = false;
       setRunning(false);
       return;
@@ -194,6 +197,8 @@ function Index() {
     runningRef.current = true;
     setRunning(true);
     lastAlertRef.current = null;
+    lockUntilRef.current = 0;
+    setLockRemaining(0);
     void loop();
   }, [running, sharing, loop]);
 
