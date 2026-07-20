@@ -2,20 +2,36 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useServerFn } from "@tanstack/react-start";
 import { Button } from "@/components/ui/button";
-import { analyzeFrame } from "@/lib/analyze.functions";
-import { Play, Square, TrendingUp, TrendingDown, Minus, Volume2, VolumeX, Zap } from "lucide-react";
+import { analyzeFrame, evaluateOutcome } from "@/lib/analyze.functions";
+import {
+  Play,
+  Square,
+  TrendingUp,
+  TrendingDown,
+  Minus,
+  Volume2,
+  VolumeX,
+  Zap,
+  Check,
+  X,
+  HelpCircle,
+} from "lucide-react";
 
 export const Route = createFileRoute("/")({
   component: Index,
   head: () => ({
     meta: [
       { title: "Signal Vision — Análise de tela em tempo real" },
-      { name: "description", content: "Análise de gráficos em tempo real por IA através de compartilhamento de tela." },
+      {
+        name: "description",
+        content: "Análise de gráficos em tempo real por IA através de compartilhamento de tela.",
+      },
     ],
   }),
 });
 
 type SignalKind = "CALL" | "PUT" | "WAIT";
+type Outcome = "WIN" | "LOSS" | "UNKNOWN" | null;
 type SignalRow = {
   id: string;
   ts: number;
@@ -23,17 +39,52 @@ type SignalRow = {
   confidence: number;
   reason: string;
   latencyMs: number;
+  outcome?: Outcome;
+  lesson?: string;
 };
+
+const LESSONS_KEY = "sv_lessons_v1";
+const STATS_KEY = "sv_stats_v1";
+const MAX_LESSONS = 6;
+
+function loadLessons(): string[] {
+  try {
+    return JSON.parse(localStorage.getItem(LESSONS_KEY) || "[]");
+  } catch {
+    return [];
+  }
+}
+function saveLessons(l: string[]) {
+  try {
+    localStorage.setItem(LESSONS_KEY, JSON.stringify(l.slice(-MAX_LESSONS)));
+  } catch {}
+}
+function loadStats(): { wins: number; losses: number } {
+  try {
+    return JSON.parse(localStorage.getItem(STATS_KEY) || '{"wins":0,"losses":0}');
+  } catch {
+    return { wins: 0, losses: 0 };
+  }
+}
+function saveStats(s: { wins: number; losses: number }) {
+  try {
+    localStorage.setItem(STATS_KEY, JSON.stringify(s));
+  } catch {}
+}
 
 function Index() {
   const analyze = useServerFn(analyzeFrame);
+  const evaluate = useServerFn(evaluateOutcome);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const runningRef = useRef(false);
   const soundRef = useRef(true);
-  const lastAlertRef = useRef<SignalKind | null>(null);
   const lockUntilRef = useRef<number>(0);
+  const lessonsRef = useRef<string[]>([]);
+  const statsRef = useRef<{ wins: number; losses: number }>({ wins: 0, losses: 0 });
+  const pendingTradeRef = useRef<SignalRow | null>(null);
+  const evaluateAtRef = useRef<number>(0);
 
   const [sharing, setSharing] = useState(false);
   const [running, setRunning] = useState(false);
@@ -43,28 +94,81 @@ function Index() {
   const [error, setError] = useState<string | null>(null);
   const [analyzing, setAnalyzing] = useState(false);
   const [lockRemaining, setLockRemaining] = useState(0);
+  const [stats, setStats] = useState<{ wins: number; losses: number }>({ wins: 0, losses: 0 });
 
   useEffect(() => {
     soundRef.current = sound;
   }, [sound]);
 
-  const beep = useCallback((kind: SignalKind) => {
-    if (!soundRef.current || kind === "WAIT") return;
-    try {
-      const AC = window.AudioContext || (window as any).webkitAudioContext;
-      const ctx = new AC();
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      osc.connect(gain);
-      gain.connect(ctx.destination);
-      osc.frequency.value = kind === "CALL" ? 880 : 330;
-      gain.gain.setValueAtTime(0.0001, ctx.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.3, ctx.currentTime + 0.01);
-      gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.35);
-      osc.start();
-      osc.stop(ctx.currentTime + 0.4);
-    } catch {}
+  useEffect(() => {
+    lessonsRef.current = loadLessons();
+    const s = loadStats();
+    statsRef.current = s;
+    setStats(s);
   }, []);
+
+  // ==== Efeitos sonoros ====
+  const playTone = useCallback(
+    (steps: { freq: number; dur: number; delay: number; type?: OscillatorType; gain?: number }[]) => {
+      if (!soundRef.current) return;
+      try {
+        const AC = window.AudioContext || (window as any).webkitAudioContext;
+        const ctx = new AC();
+        const now = ctx.currentTime;
+        steps.forEach((s) => {
+          const osc = ctx.createOscillator();
+          const g = ctx.createGain();
+          osc.type = s.type ?? "sine";
+          osc.frequency.setValueAtTime(s.freq, now + s.delay);
+          osc.connect(g);
+          g.connect(ctx.destination);
+          const peak = s.gain ?? 0.25;
+          g.gain.setValueAtTime(0.0001, now + s.delay);
+          g.gain.exponentialRampToValueAtTime(peak, now + s.delay + 0.01);
+          g.gain.exponentialRampToValueAtTime(0.0001, now + s.delay + s.dur);
+          osc.start(now + s.delay);
+          osc.stop(now + s.delay + s.dur + 0.02);
+        });
+      } catch {}
+    },
+    [],
+  );
+
+  const alertCall = useCallback(
+    () =>
+      playTone([
+        { freq: 660, dur: 0.12, delay: 0 },
+        { freq: 880, dur: 0.12, delay: 0.13 },
+        { freq: 1175, dur: 0.22, delay: 0.26 },
+      ]),
+    [playTone],
+  );
+  const alertPut = useCallback(
+    () =>
+      playTone([
+        { freq: 660, dur: 0.12, delay: 0 },
+        { freq: 494, dur: 0.12, delay: 0.13 },
+        { freq: 330, dur: 0.22, delay: 0.26 },
+      ]),
+    [playTone],
+  );
+  const alertWin = useCallback(
+    () =>
+      playTone([
+        { freq: 784, dur: 0.1, delay: 0, type: "triangle" },
+        { freq: 988, dur: 0.1, delay: 0.1, type: "triangle" },
+        { freq: 1319, dur: 0.28, delay: 0.2, type: "triangle", gain: 0.3 },
+      ]),
+    [playTone],
+  );
+  const alertLoss = useCallback(
+    () =>
+      playTone([
+        { freq: 300, dur: 0.18, delay: 0, type: "sawtooth", gain: 0.18 },
+        { freq: 200, dur: 0.28, delay: 0.19, type: "sawtooth", gain: 0.18 },
+      ]),
+    [playTone],
+  );
 
   const stopSharing = useCallback(() => {
     runningRef.current = false;
@@ -100,7 +204,6 @@ function Index() {
     const video = videoRef.current;
     const canvas = canvasRef.current;
     if (!video || !canvas || !video.videoWidth) return null;
-    // Downscale para máxima velocidade: largura alvo 900px
     const targetW = Math.min(900, video.videoWidth);
     const scale = targetW / video.videoWidth;
     canvas.width = targetW;
@@ -111,22 +214,78 @@ function Index() {
     return canvas.toDataURL("image/jpeg", 0.6);
   }, []);
 
+  const runEvaluation = useCallback(async () => {
+    const pending = pendingTradeRef.current;
+    if (!pending) return;
+    const frame = captureFrame();
+    if (!frame) return;
+    try {
+      const res = await evaluate({
+        data: {
+          image: frame,
+          signal: pending.signal as "CALL" | "PUT",
+          reason: pending.reason,
+        },
+      });
+      // Atualiza histórico e sinal atual
+      setHistory((h) =>
+        h.map((r) => (r.id === pending.id ? { ...r, outcome: res.outcome, lesson: res.lesson } : r)),
+      );
+      setCurrent((c) =>
+        c && c.id === pending.id ? { ...c, outcome: res.outcome, lesson: res.lesson } : c,
+      );
+
+      if (res.outcome === "WIN") {
+        statsRef.current = { ...statsRef.current, wins: statsRef.current.wins + 1 };
+        alertWin();
+      } else if (res.outcome === "LOSS") {
+        statsRef.current = { ...statsRef.current, losses: statsRef.current.losses + 1 };
+        alertLoss();
+      }
+      saveStats(statsRef.current);
+      setStats({ ...statsRef.current });
+
+      if (res.lesson) {
+        const tag = res.outcome === "WIN" ? "[WIN]" : res.outcome === "LOSS" ? "[LOSS]" : "[?]";
+        const line = `${tag} ${pending.signal} — ${res.lesson}`;
+        lessonsRef.current = [...lessonsRef.current, line].slice(-MAX_LESSONS);
+        saveLessons(lessonsRef.current);
+      }
+    } catch {
+      // silencioso; se falhar, segue vida
+    } finally {
+      pendingTradeRef.current = null;
+    }
+  }, [captureFrame, evaluate, alertWin, alertLoss]);
+
   const loop = useCallback(async () => {
-    const MIN_INTERVAL_MS = 2500; // throttle p/ respeitar rate limit do gateway
-    const CYCLE_LOCK_MS = 60000; // trava de 60s após CALL/PUT (ciclo M1)
+    const MIN_INTERVAL_MS = 2500;
+    const CYCLE_LOCK_MS = 60000;
     const MIN_CONFIDENCE = 75;
     let backoffMs = 0;
+
     while (runningRef.current) {
       const cycleStart = Date.now();
 
-      // Trava de ciclo: enquanto sinal ativo, só decrementa contador
+      // Trava de ciclo — durante o M1 da ordem aberta, apenas espera
       if (lockUntilRef.current > Date.now()) {
         const remaining = Math.ceil((lockUntilRef.current - Date.now()) / 1000);
         setLockRemaining(remaining);
+        // Ao expirar, dispara avaliação da ordem
+        if (evaluateAtRef.current && Date.now() >= evaluateAtRef.current) {
+          evaluateAtRef.current = 0;
+          void runEvaluation();
+        }
         await new Promise((r) => setTimeout(r, 500));
         continue;
       }
       if (lockRemaining !== 0) setLockRemaining(0);
+
+      // Garante que a avaliação rode ao sair do lock
+      if (evaluateAtRef.current && Date.now() >= evaluateAtRef.current) {
+        evaluateAtRef.current = 0;
+        await runEvaluation();
+      }
 
       const frame = captureFrame();
       if (!frame) {
@@ -135,12 +294,18 @@ function Index() {
       }
       setAnalyzing(true);
       try {
-        const res = await analyze({ data: { image: frame, timeframe: "1min" } });
+        const res = await analyze({
+          data: {
+            image: frame,
+            timeframe: "1min",
+            lessons: lessonsRef.current.join("\n") || undefined,
+            stats: statsRef.current,
+          },
+        });
         setAnalyzing(false);
         setError(null);
         backoffMs = 0;
 
-        // Downgrade abaixo do threshold — vira WAIT
         const signal: SignalKind =
           res.signal !== "WAIT" && res.confidence < MIN_CONFIDENCE ? "WAIT" : res.signal;
 
@@ -149,22 +314,23 @@ function Index() {
           ts: Date.now(),
           signal,
           confidence: res.confidence,
-          reason: signal === "WAIT" && res.signal !== "WAIT"
-            ? `Confiança baixa (${res.confidence}%) — aguardando setup mais claro`
-            : res.reason,
+          reason:
+            signal === "WAIT" && res.signal !== "WAIT"
+              ? `Confiança baixa (${res.confidence}%) — aguardando setup mais claro`
+              : res.reason,
           latencyMs: res.latencyMs,
+          outcome: null,
         };
         setCurrent(row);
         setHistory((h) => [row, ...h].slice(0, 30));
 
         if (signal !== "WAIT" && res.confidence >= MIN_CONFIDENCE) {
-          beep(signal);
-          lastAlertRef.current = signal;
-          // Trava de ciclo — aguarda o M1 fechar antes de nova análise
+          if (signal === "CALL") alertCall();
+          else alertPut();
+          pendingTradeRef.current = row;
           lockUntilRef.current = Date.now() + CYCLE_LOCK_MS;
+          evaluateAtRef.current = lockUntilRef.current;
           setLockRemaining(Math.ceil(CYCLE_LOCK_MS / 1000));
-        } else {
-          lastAlertRef.current = null;
         }
       } catch (e: any) {
         setAnalyzing(false);
@@ -185,7 +351,7 @@ function Index() {
         await new Promise((r) => setTimeout(r, MIN_INTERVAL_MS - elapsed));
       }
     }
-  }, [analyze, beep, captureFrame, lockRemaining]);
+  }, [analyze, alertCall, alertPut, captureFrame, lockRemaining, runEvaluation]);
 
   const toggleRun = useCallback(() => {
     if (running) {
@@ -196,13 +362,23 @@ function Index() {
     if (!sharing) return;
     runningRef.current = true;
     setRunning(true);
-    lastAlertRef.current = null;
     lockUntilRef.current = 0;
     setLockRemaining(0);
     void loop();
   }, [running, sharing, loop]);
 
+  const resetLearning = useCallback(() => {
+    lessonsRef.current = [];
+    statsRef.current = { wins: 0, losses: 0 };
+    saveLessons([]);
+    saveStats({ wins: 0, losses: 0 });
+    setStats({ wins: 0, losses: 0 });
+  }, []);
+
   useEffect(() => () => stopSharing(), [stopSharing]);
+
+  const total = stats.wins + stats.losses;
+  const winRate = total > 0 ? Math.round((stats.wins / total) * 100) : 0;
 
   return (
     <div className="min-h-screen bg-[#0a0e17] text-white">
@@ -216,7 +392,23 @@ function Index() {
             <p className="text-xs text-white/50 mt-0.5">Análise de tela em tempo real</p>
           </div>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-3">
+          <div className="hidden sm:flex items-center gap-3 rounded-lg bg-white/[0.04] border border-white/10 px-3 py-1.5">
+            <div className="text-center">
+              <div className="text-[10px] uppercase tracking-wider text-white/40">Win</div>
+              <div className="text-sm font-bold text-emerald-400 tabular-nums">{stats.wins}</div>
+            </div>
+            <div className="h-6 w-px bg-white/10" />
+            <div className="text-center">
+              <div className="text-[10px] uppercase tracking-wider text-white/40">Loss</div>
+              <div className="text-sm font-bold text-red-400 tabular-nums">{stats.losses}</div>
+            </div>
+            <div className="h-6 w-px bg-white/10" />
+            <div className="text-center">
+              <div className="text-[10px] uppercase tracking-wider text-white/40">Taxa</div>
+              <div className="text-sm font-bold tabular-nums">{winRate}%</div>
+            </div>
+          </div>
           <Button
             variant="ghost"
             size="sm"
@@ -229,7 +421,6 @@ function Index() {
       </header>
 
       <main className="grid grid-cols-12 gap-4 p-4">
-        {/* Vídeo + controles */}
         <section className="col-span-12 lg:col-span-8 space-y-4">
           <div className="relative rounded-xl overflow-hidden bg-black border border-white/10 aspect-video">
             <video ref={videoRef} className="w-full h-full object-contain" muted playsInline />
@@ -261,7 +452,7 @@ function Index() {
             )}
           </div>
 
-          <div className="flex gap-2">
+          <div className="flex gap-2 flex-wrap">
             {sharing && (
               <>
                 <Button
@@ -293,6 +484,14 @@ function Index() {
                 </Button>
               </>
             )}
+            <Button
+              onClick={resetLearning}
+              variant="outline"
+              size="lg"
+              className="border-white/10 bg-white/5 hover:bg-white/10 text-white"
+            >
+              Zerar aprendizado
+            </Button>
           </div>
 
           {error && (
@@ -302,7 +501,6 @@ function Index() {
           )}
         </section>
 
-        {/* Sinal atual + histórico */}
         <aside className="col-span-12 lg:col-span-4 space-y-4">
           <CurrentSignal row={current} analyzing={analyzing} lockRemaining={lockRemaining} />
           <div className="rounded-xl bg-white/[0.03] border border-white/10 p-4">
@@ -310,9 +508,7 @@ function Index() {
               Histórico
             </h3>
             <div className="space-y-2 max-h-[420px] overflow-y-auto">
-              {history.length === 0 && (
-                <p className="text-sm text-white/40">Sem sinais ainda.</p>
-              )}
+              {history.length === 0 && <p className="text-sm text-white/40">Sem sinais ainda.</p>}
               {history.map((r) => (
                 <HistoryRow key={r.id} row={r} />
               ))}
@@ -373,7 +569,9 @@ function CurrentSignal({
       </div>
       <div className="mt-4 h-1.5 rounded-full bg-white/10 overflow-hidden">
         <div
-          className={isCall ? "h-full bg-emerald-400" : isPut ? "h-full bg-red-400" : "h-full bg-white/30"}
+          className={
+            isCall ? "h-full bg-emerald-400" : isPut ? "h-full bg-red-400" : "h-full bg-white/30"
+          }
           style={{ width: `${row.confidence}%` }}
         />
       </div>
@@ -384,6 +582,37 @@ function CurrentSignal({
           <span className={`text-lg font-bold tabular-nums ${color}`}>{lockRemaining}s</span>
         </div>
       )}
+      {row.outcome && row.outcome !== null && (
+        <OutcomeBadge outcome={row.outcome} lesson={row.lesson} />
+      )}
+    </div>
+  );
+}
+
+function OutcomeBadge({ outcome, lesson }: { outcome: Outcome; lesson?: string }) {
+  if (!outcome) return null;
+  const map = {
+    WIN: {
+      cls: "bg-emerald-500/15 border-emerald-500/40 text-emerald-300",
+      Icon: Check,
+      label: "WIN",
+    },
+    LOSS: { cls: "bg-red-500/15 border-red-500/40 text-red-300", Icon: X, label: "LOSS" },
+    UNKNOWN: {
+      cls: "bg-white/5 border-white/20 text-white/60",
+      Icon: HelpCircle,
+      label: "Indefinido",
+    },
+  } as const;
+  const cfg = map[outcome];
+  const Icon = cfg.Icon;
+  return (
+    <div className={`mt-3 rounded-lg border px-3 py-2 ${cfg.cls}`}>
+      <div className="flex items-center gap-2">
+        <Icon className="h-4 w-4" strokeWidth={3} />
+        <span className="text-sm font-bold">Resultado: {cfg.label}</span>
+      </div>
+      {lesson && <p className="text-xs mt-1 opacity-80">Lição: {lesson}</p>}
     </div>
   );
 }
@@ -394,6 +623,16 @@ function HistoryRow({ row }: { row: SignalRow }) {
   const color = isCall ? "text-emerald-400" : isPut ? "text-red-400" : "text-white/50";
   const Icon = isCall ? TrendingUp : isPut ? TrendingDown : Minus;
   const time = new Date(row.ts).toLocaleTimeString("pt-BR", { hour12: false });
+
+  const outcomeDot =
+    row.outcome === "WIN"
+      ? "bg-emerald-400"
+      : row.outcome === "LOSS"
+        ? "bg-red-400"
+        : row.outcome === "UNKNOWN"
+          ? "bg-white/40"
+          : null;
+
   return (
     <div className="flex items-center gap-3 rounded-lg bg-white/[0.02] border border-white/5 px-3 py-2">
       <Icon className={`h-4 w-4 ${color}`} strokeWidth={2.5} />
@@ -401,8 +640,9 @@ function HistoryRow({ row }: { row: SignalRow }) {
         <div className="flex items-center gap-2">
           <span className={`text-sm font-bold ${color}`}>{row.signal}</span>
           <span className="text-xs text-white/40">{row.confidence}%</span>
+          {outcomeDot && <span className={`h-2 w-2 rounded-full ${outcomeDot}`} />}
         </div>
-        <p className="text-xs text-white/50 truncate">{row.reason}</p>
+        <p className="text-xs text-white/50 truncate">{row.lesson || row.reason}</p>
       </div>
       <span className="text-[10px] text-white/30 tabular-nums">{time}</span>
     </div>
