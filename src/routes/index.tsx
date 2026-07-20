@@ -1,164 +1,350 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { useServerFn } from "@tanstack/react-start";
 import { Button } from "@/components/ui/button";
-import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
-import { Check, Play, Star, ArrowRight, Instagram, Youtube, Linkedin, MessageCircle } from "lucide-react";
-import { useEffect, useState } from "react";
+import { analyzeFrame } from "@/lib/analyze.functions";
+import { Play, Square, TrendingUp, TrendingDown, Minus, Volume2, VolumeX, Zap } from "lucide-react";
 
 export const Route = createFileRoute("/")({
   component: Index,
+  head: () => ({
+    meta: [
+      { title: "Signal Vision — Análise de tela em tempo real" },
+      { name: "description", content: "Análise de gráficos em tempo real por IA através de compartilhamento de tela." },
+    ],
+  }),
 });
 
+type SignalKind = "CALL" | "PUT" | "WAIT";
+type SignalRow = {
+  id: string;
+  ts: number;
+  signal: SignalKind;
+  confidence: number;
+  reason: string;
+  latencyMs: number;
+};
+
 function Index() {
-  const [timeLeft, setTimeLeft] = useState({
-    days: 2,
-    hours: 2,
-    minutes: 16,
-    seconds: 40
-  });
+  const analyze = useServerFn(analyzeFrame);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const runningRef = useRef(false);
+  const soundRef = useRef(true);
+  const lastAlertRef = useRef<SignalKind | null>(null);
+
+  const [sharing, setSharing] = useState(false);
+  const [running, setRunning] = useState(false);
+  const [sound, setSound] = useState(true);
+  const [current, setCurrent] = useState<SignalRow | null>(null);
+  const [history, setHistory] = useState<SignalRow[]>([]);
+  const [error, setError] = useState<string | null>(null);
+  const [analyzing, setAnalyzing] = useState(false);
 
   useEffect(() => {
-    const timer = setInterval(() => {
-      setTimeLeft(prev => {
-        if (prev.seconds > 0) return { ...prev, seconds: prev.seconds - 1 };
-        if (prev.minutes > 0) return { ...prev, minutes: prev.minutes - 1, seconds: 59 };
-        if (prev.hours > 0) return { ...prev, hours: prev.hours - 1, minutes: 59, seconds: 59 };
-        if (prev.days > 0) return { ...prev, days: prev.days - 1, hours: 23, minutes: 59, seconds: 59 };
-        return prev;
-      });
-    }, 1000);
-    return () => clearInterval(timer);
+    soundRef.current = sound;
+  }, [sound]);
+
+  const beep = useCallback((kind: SignalKind) => {
+    if (!soundRef.current || kind === "WAIT") return;
+    try {
+      const AC = window.AudioContext || (window as any).webkitAudioContext;
+      const ctx = new AC();
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.frequency.value = kind === "CALL" ? 880 : 330;
+      gain.gain.setValueAtTime(0.0001, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.3, ctx.currentTime + 0.01);
+      gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.35);
+      osc.start();
+      osc.stop(ctx.currentTime + 0.4);
+    } catch {}
   }, []);
 
-  const formatNumber = (num: number) => num.toString().padStart(2, '0');
+  const stopSharing = useCallback(() => {
+    runningRef.current = false;
+    setRunning(false);
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach((t) => t.stop());
+      streamRef.current = null;
+    }
+    if (videoRef.current) videoRef.current.srcObject = null;
+    setSharing(false);
+  }, []);
+
+  const startSharing = useCallback(async () => {
+    setError(null);
+    try {
+      const stream = await navigator.mediaDevices.getDisplayMedia({
+        video: { frameRate: 30 },
+        audio: false,
+      });
+      streamRef.current = stream;
+      stream.getVideoTracks()[0].addEventListener("ended", stopSharing);
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        await videoRef.current.play();
+      }
+      setSharing(true);
+    } catch (e: any) {
+      setError(e?.message ?? "Falha ao compartilhar tela");
+    }
+  }, [stopSharing]);
+
+  const captureFrame = useCallback((): string | null => {
+    const video = videoRef.current;
+    const canvas = canvasRef.current;
+    if (!video || !canvas || !video.videoWidth) return null;
+    // Downscale para máxima velocidade: largura alvo 900px
+    const targetW = Math.min(900, video.videoWidth);
+    const scale = targetW / video.videoWidth;
+    canvas.width = targetW;
+    canvas.height = Math.round(video.videoHeight * scale);
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return null;
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    return canvas.toDataURL("image/jpeg", 0.6);
+  }, []);
+
+  const loop = useCallback(async () => {
+    while (runningRef.current) {
+      const frame = captureFrame();
+      if (!frame) {
+        await new Promise((r) => setTimeout(r, 200));
+        continue;
+      }
+      setAnalyzing(true);
+      try {
+        const res = await analyze({ data: { image: frame, timeframe: "1min" } });
+        setAnalyzing(false);
+        const row: SignalRow = {
+          id: crypto.randomUUID(),
+          ts: Date.now(),
+          signal: res.signal,
+          confidence: res.confidence,
+          reason: res.reason,
+          latencyMs: res.latencyMs,
+        };
+        setCurrent(row);
+        setHistory((h) => [row, ...h].slice(0, 30));
+        if (res.confidence >= 65 && res.signal !== "WAIT" && lastAlertRef.current !== res.signal) {
+          beep(res.signal);
+          lastAlertRef.current = res.signal;
+        }
+        if (res.signal === "WAIT") lastAlertRef.current = null;
+      } catch (e: any) {
+        setAnalyzing(false);
+        setError(e?.message ?? "Erro na análise");
+        await new Promise((r) => setTimeout(r, 1000));
+      }
+    }
+  }, [analyze, beep, captureFrame]);
+
+  const toggleRun = useCallback(() => {
+    if (running) {
+      runningRef.current = false;
+      setRunning(false);
+      return;
+    }
+    if (!sharing) return;
+    runningRef.current = true;
+    setRunning(true);
+    lastAlertRef.current = null;
+    void loop();
+  }, [running, sharing, loop]);
+
+  useEffect(() => () => stopSharing(), [stopSharing]);
 
   return (
-    <div className="min-h-screen bg-[#0A0A0A] text-white selection:bg-[#90FF90] selection:text-black font-sans">
-      {/* Top Banner / Countdown */}
-      <div className="bg-[#1A1A1A] py-3 px-4 border-b border-white/5">
-        <div className="container mx-auto flex flex-col md:flex-row items-center justify-center gap-4 text-center">
-          <div className="flex items-center gap-2 text-sm font-bold uppercase tracking-tight">
-            <span className="text-orange-500 animate-pulse">🔥</span>
-            <span>Últimas vagas com acesso completo à Voss Academy</span>
+    <div className="min-h-screen bg-[#0a0e17] text-white">
+      <header className="border-b border-white/5 px-6 py-4 flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <div className="h-9 w-9 rounded-lg bg-gradient-to-br from-emerald-400 to-cyan-500 flex items-center justify-center">
+            <Zap className="h-5 w-5 text-black" strokeWidth={3} />
           </div>
-          <div className="hidden md:block h-4 w-px bg-white/20"></div>
-          <div className="flex items-center gap-3">
-            <div className="flex gap-1.5 items-center">
-              <span className="text-xl font-black text-orange-500">{formatNumber(timeLeft.days)}</span>
-              <span className="text-[10px] font-bold text-zinc-500 uppercase">Dias</span>
-            </div>
-            <span className="text-zinc-700 font-bold">:</span>
-            <div className="flex gap-1.5 items-center">
-              <span className="text-xl font-black text-orange-500">{formatNumber(timeLeft.hours)}</span>
-              <span className="text-[10px] font-bold text-zinc-500 uppercase">Horas</span>
-            </div>
-            <span className="text-zinc-700 font-bold">:</span>
-            <div className="flex gap-1.5 items-center">
-              <span className="text-xl font-black text-orange-500">{formatNumber(timeLeft.minutes)}</span>
-              <span className="text-[10px] font-bold text-zinc-500 uppercase">Min</span>
-            </div>
-            <span className="text-zinc-700 font-bold">:</span>
-            <div className="flex gap-1.5 items-center">
-              <span className="text-xl font-black text-orange-500">{formatNumber(timeLeft.seconds)}</span>
-              <span className="text-[10px] font-bold text-zinc-500 uppercase">Seg</span>
-            </div>
-          </div>
-          <button className="bg-orange-600 hover:bg-orange-700 text-white text-xs font-black px-4 py-1.5 rounded uppercase tracking-tighter transition-all">
-            Garantir Oferta
-          </button>
-        </div>
-      </div>
-
-      {/* Header / Navbar */}
-      <nav className="sticky top-0 z-50 w-full border-b border-white/5 bg-[#0A0A0A]/90 backdrop-blur-xl">
-        <div className="container mx-auto flex h-20 items-center justify-between px-4 lg:px-8">
-          <div className="flex items-center gap-2 cursor-pointer group">
-            <div className="h-9 w-9 bg-orange-600 rounded flex items-center justify-center font-black text-xl italic group-hover:scale-105 transition-transform">V</div>
-            <span className="text-lg font-black tracking-tighter uppercase leading-none">Voss Academy</span>
-          </div>
-          
-          <div className="hidden lg:flex items-center gap-10 text-xs font-bold uppercase tracking-widest text-zinc-400">
-            <a href="#" className="hover:text-white transition-colors">Cursos Completos</a>
-            <a href="#" className="hover:text-white transition-colors">Cursos Gratuitos</a>
-            <a href="#" className="hover:text-white transition-colors">Para Empresas</a>
-          </div>
-
-          <div className="flex items-center gap-4">
-            <a href="#" className="hidden sm:block text-xs font-bold uppercase tracking-widest text-zinc-400 hover:text-white transition-colors">Entrar</a>
-            <Button className="bg-[#90FF90] hover:bg-[#70FF70] text-black border-none font-black text-xs px-6 py-6 rounded-none uppercase tracking-widest">
-              Começar Agora
-            </Button>
+          <div>
+            <h1 className="font-bold text-lg leading-none">Signal Vision</h1>
+            <p className="text-xs text-white/50 mt-0.5">Análise de tela em tempo real</p>
           </div>
         </div>
-      </nav>
+        <div className="flex items-center gap-2">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setSound((s) => !s)}
+            className="text-white/70 hover:text-white hover:bg-white/5"
+          >
+            {sound ? <Volume2 className="h-4 w-4" /> : <VolumeX className="h-4 w-4" />}
+          </Button>
+        </div>
+      </header>
 
-      <main>
-        {/* Hero Section */}
-        <section className="relative pt-24 pb-20 lg:pt-32 lg:pb-32 overflow-hidden">
-          <div className="container mx-auto px-4 text-center relative z-10">
-            <div className="inline-flex items-center gap-3 rounded-full border border-orange-500/20 bg-orange-500/5 px-5 py-2 text-[10px] font-black text-orange-500 mb-12 uppercase tracking-[0.2em]">
-              <span className="relative flex h-2 w-2">
-                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-orange-500 opacity-75"></span>
-                <span className="relative inline-flex h-2 w-2 rounded-full bg-orange-500"></span>
-              </span>
-              Melhor curso de Lovable do mundo
-            </div>
-            
-            <h1 className="mx-auto max-w-5xl text-5xl font-black tracking-tighter sm:text-7xl lg:text-9xl mb-8 leading-[0.9]">
-              CRIE SITES E <br />
-              APLICATIVOS COM IA, <br />
-              <span className="text-[#90FF90] italic">SEM PROGRAMAR!</span>
-            </h1>
-            
-            <p className="mx-auto max-w-2xl text-lg text-zinc-500 mb-12 font-medium leading-relaxed">
-              Transforme ideias em negócios lucrativos usando ferramentas de IA, mesmo sem saber nada de programação.
-            </p>
-
-            {/* Video Preview Card */}
-            <div className="max-w-4xl mx-auto relative group">
-              <div className="absolute -inset-1 bg-gradient-to-r from-orange-600 to-[#90FF90] rounded-3xl blur opacity-20 group-hover:opacity-40 transition duration-1000 group-hover:duration-200"></div>
-              <div className="relative aspect-video rounded-2xl border border-white/10 bg-zinc-900 overflow-hidden shadow-2xl">
-                <img 
-                  src="https://images.unsplash.com/photo-1550745165-9bc0b252726f?auto=format&fit=crop&q=80&w=2070" 
-                  className="w-full h-full object-cover opacity-60 transition-transform duration-700 group-hover:scale-105"
-                  alt="Rafa Voss"
-                />
-                
-                {/* Video Info Header */}
-                <div className="absolute top-0 left-0 w-full p-4 flex items-center gap-3 bg-gradient-to-b from-black/80 to-transparent">
-                  <div className="h-10 w-10 rounded-full border-2 border-[#90FF90] overflow-hidden">
-                    <img src="https://github.com/shadcn.png" alt="Rafa Voss" className="w-full h-full object-cover" />
+      <main className="grid grid-cols-12 gap-4 p-4">
+        {/* Vídeo + controles */}
+        <section className="col-span-12 lg:col-span-8 space-y-4">
+          <div className="relative rounded-xl overflow-hidden bg-black border border-white/10 aspect-video">
+            <video ref={videoRef} className="w-full h-full object-contain" muted playsInline />
+            {!sharing && (
+              <div className="absolute inset-0 flex flex-col items-center justify-center gap-4 bg-gradient-to-br from-slate-900 to-black">
+                <div className="text-center max-w-md px-6">
+                  <div className="h-16 w-16 mx-auto rounded-2xl bg-gradient-to-br from-emerald-400 to-cyan-500 flex items-center justify-center mb-4">
+                    <Play className="h-7 w-7 text-black ml-1" fill="currentColor" />
                   </div>
-                  <div className="text-left">
-                    <div className="text-sm font-bold leading-none">Intro Curso - LovablePRO</div>
-                    <div className="text-[10px] text-zinc-400 font-medium">Rafa Voss | Claude & AI</div>
-                  </div>
+                  <h2 className="text-2xl font-bold">Compartilhe sua tela</h2>
+                  <p className="text-white/60 mt-2 text-sm">
+                    Selecione a janela da IQ Option (ou qualquer gráfico) para a IA analisar em tempo real.
+                  </p>
                 </div>
-
-                <div className="absolute inset-0 flex items-center justify-center">
-                  <div className="relative">
-                    <div className="absolute inset-0 bg-red-600 blur-2xl opacity-50 animate-pulse"></div>
-                    <div className="relative h-16 w-24 bg-red-600 rounded-xl flex items-center justify-center cursor-pointer hover:scale-110 transition-transform">
-                      <Play className="h-8 w-8 text-white fill-current" />
-                    </div>
-                  </div>
-                </div>
+                <Button
+                  onClick={startSharing}
+                  size="lg"
+                  className="bg-emerald-500 hover:bg-emerald-400 text-black font-semibold"
+                >
+                  <Play className="h-4 w-4 mr-2" fill="currentColor" /> Compartilhar tela
+                </Button>
               </div>
-            </div>
+            )}
+            {analyzing && sharing && (
+              <div className="absolute top-3 right-3 flex items-center gap-2 bg-black/70 backdrop-blur rounded-full px-3 py-1.5 text-xs">
+                <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
+                Analisando…
+              </div>
+            )}
           </div>
 
-          {/* Background Gradients */}
-          <div className="absolute top-0 left-1/4 -z-10 h-[600px] w-[600px] rounded-full bg-orange-600/10 blur-[120px]"></div>
-          <div className="absolute bottom-0 right-1/4 -z-10 h-[600px] w-[600px] rounded-full bg-[#90FF90]/5 blur-[120px]"></div>
+          <div className="flex gap-2">
+            {sharing && (
+              <>
+                <Button
+                  onClick={toggleRun}
+                  size="lg"
+                  className={
+                    running
+                      ? "bg-red-500 hover:bg-red-400 text-white font-semibold flex-1"
+                      : "bg-emerald-500 hover:bg-emerald-400 text-black font-semibold flex-1"
+                  }
+                >
+                  {running ? (
+                    <>
+                      <Square className="h-4 w-4 mr-2" fill="currentColor" /> Parar análise
+                    </>
+                  ) : (
+                    <>
+                      <Play className="h-4 w-4 mr-2" fill="currentColor" /> Iniciar análise
+                    </>
+                  )}
+                </Button>
+                <Button
+                  onClick={stopSharing}
+                  variant="outline"
+                  size="lg"
+                  className="border-white/10 bg-white/5 hover:bg-white/10 text-white"
+                >
+                  Encerrar tela
+                </Button>
+              </>
+            )}
+          </div>
+
+          {error && (
+            <div className="rounded-lg bg-red-500/10 border border-red-500/30 px-4 py-3 text-sm text-red-300">
+              {error}
+            </div>
+          )}
         </section>
 
-        {/* Floating WhatsApp */}
-        <div className="fixed bottom-8 right-8 z-[100] cursor-pointer group">
-          <div className="absolute inset-0 bg-green-500 blur-xl opacity-20 group-hover:opacity-40 transition-opacity"></div>
-          <div className="relative h-16 w-16 bg-[#25D366] rounded-full flex items-center justify-center shadow-lg group-hover:scale-110 transition-transform">
-            <MessageCircle className="h-8 w-8 text-white fill-current" />
+        {/* Sinal atual + histórico */}
+        <aside className="col-span-12 lg:col-span-4 space-y-4">
+          <CurrentSignal row={current} analyzing={analyzing} />
+          <div className="rounded-xl bg-white/[0.03] border border-white/10 p-4">
+            <h3 className="text-xs font-semibold uppercase tracking-wider text-white/50 mb-3">
+              Histórico
+            </h3>
+            <div className="space-y-2 max-h-[420px] overflow-y-auto">
+              {history.length === 0 && (
+                <p className="text-sm text-white/40">Sem sinais ainda.</p>
+              )}
+              {history.map((r) => (
+                <HistoryRow key={r.id} row={r} />
+              ))}
+            </div>
           </div>
-        </div>
+        </aside>
       </main>
+
+      <canvas ref={canvasRef} className="hidden" />
+
+      <footer className="px-6 py-4 text-center text-xs text-white/40 border-t border-white/5 mt-6">
+        Ferramenta educacional. Sinais gerados por IA não são garantia de resultado. Opere por sua conta e risco.
+      </footer>
+    </div>
+  );
+}
+
+function CurrentSignal({ row, analyzing }: { row: SignalRow | null; analyzing: boolean }) {
+  if (!row) {
+    return (
+      <div className="rounded-xl bg-white/[0.03] border border-white/10 p-6 text-center">
+        <p className="text-sm text-white/40">
+          {analyzing ? "Aguardando primeiro sinal…" : "Inicie a análise para receber sinais."}
+        </p>
+      </div>
+    );
+  }
+  const isCall = row.signal === "CALL";
+  const isPut = row.signal === "PUT";
+  const bg = isCall
+    ? "from-emerald-500/20 to-emerald-500/5 border-emerald-500/40"
+    : isPut
+      ? "from-red-500/20 to-red-500/5 border-red-500/40"
+      : "from-white/5 to-transparent border-white/10";
+  const Icon = isCall ? TrendingUp : isPut ? TrendingDown : Minus;
+  const color = isCall ? "text-emerald-400" : isPut ? "text-red-400" : "text-white/60";
+
+  return (
+    <div className={`rounded-xl bg-gradient-to-br ${bg} border p-5`}>
+      <div className="flex items-center justify-between">
+        <span className="text-xs uppercase tracking-wider text-white/50">Sinal atual</span>
+        <span className="text-xs text-white/40">{row.latencyMs}ms</span>
+      </div>
+      <div className="mt-3 flex items-center gap-3">
+        <Icon className={`h-10 w-10 ${color}`} strokeWidth={2.5} />
+        <div>
+          <div className={`text-4xl font-black ${color} leading-none`}>{row.signal}</div>
+          <div className="text-sm text-white/60 mt-1">{row.confidence}% de confiança</div>
+        </div>
+      </div>
+      <div className="mt-4 h-1.5 rounded-full bg-white/10 overflow-hidden">
+        <div
+          className={isCall ? "h-full bg-emerald-400" : isPut ? "h-full bg-red-400" : "h-full bg-white/30"}
+          style={{ width: `${row.confidence}%` }}
+        />
+      </div>
+      <p className="mt-3 text-sm text-white/70">{row.reason}</p>
+    </div>
+  );
+}
+
+function HistoryRow({ row }: { row: SignalRow }) {
+  const isCall = row.signal === "CALL";
+  const isPut = row.signal === "PUT";
+  const color = isCall ? "text-emerald-400" : isPut ? "text-red-400" : "text-white/50";
+  const Icon = isCall ? TrendingUp : isPut ? TrendingDown : Minus;
+  const time = new Date(row.ts).toLocaleTimeString("pt-BR", { hour12: false });
+  return (
+    <div className="flex items-center gap-3 rounded-lg bg-white/[0.02] border border-white/5 px-3 py-2">
+      <Icon className={`h-4 w-4 ${color}`} strokeWidth={2.5} />
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-2">
+          <span className={`text-sm font-bold ${color}`}>{row.signal}</span>
+          <span className="text-xs text-white/40">{row.confidence}%</span>
+        </div>
+        <p className="text-xs text-white/50 truncate">{row.reason}</p>
+      </div>
+      <span className="text-[10px] text-white/30 tabular-nums">{time}</span>
     </div>
   );
 }
