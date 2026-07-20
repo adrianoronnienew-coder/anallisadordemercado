@@ -33,6 +33,7 @@ function Index() {
   const runningRef = useRef(false);
   const soundRef = useRef(true);
   const lastAlertRef = useRef<SignalKind | null>(null);
+  const lockUntilRef = useRef<number>(0);
 
   const [sharing, setSharing] = useState(false);
   const [running, setRunning] = useState(false);
@@ -41,6 +42,7 @@ function Index() {
   const [history, setHistory] = useState<SignalRow[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [analyzing, setAnalyzing] = useState(false);
+  const [lockRemaining, setLockRemaining] = useState(0);
 
   useEffect(() => {
     soundRef.current = sound;
