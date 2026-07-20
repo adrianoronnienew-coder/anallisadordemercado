@@ -107,6 +107,15 @@ function Index() {
     setStats(s);
   }, []);
 
+  // Live countdown ticker for lock (independent of loop)
+  useEffect(() => {
+    const id = setInterval(() => {
+      const remaining = Math.max(0, Math.ceil((lockUntilRef.current - Date.now()) / 1000));
+      setLockRemaining((prev) => (prev !== remaining ? remaining : prev));
+    }, 250);
+    return () => clearInterval(id);
+  }, []);
+
   // ==== Efeitos sonoros ====
   const playTone = useCallback(
     (steps: { freq: number; dur: number; delay: number; type?: OscillatorType; gain?: number }[]) => {
@@ -261,7 +270,7 @@ function Index() {
   const loop = useCallback(async () => {
     const MIN_INTERVAL_MS = 2500;
     const CYCLE_LOCK_MS = 60000;
-    const MIN_CONFIDENCE = 75;
+    const MIN_CONFIDENCE = 68;
     let backoffMs = 0;
 
     while (runningRef.current) {
@@ -444,6 +453,21 @@ function Index() {
                 </Button>
               </div>
             )}
+            {sharing && (
+              <>
+                {/* Scanning sweep overlay */}
+                <div className="pointer-events-none absolute inset-0 overflow-hidden">
+                  {running && (
+                    <div className="absolute inset-x-0 h-24 -top-24 bg-gradient-to-b from-transparent via-emerald-400/20 to-transparent animate-scan" />
+                  )}
+                  {/* Corner brackets */}
+                  <div className="absolute top-2 left-2 h-6 w-6 border-t-2 border-l-2 border-emerald-400/60" />
+                  <div className="absolute top-2 right-2 h-6 w-6 border-t-2 border-r-2 border-emerald-400/60" />
+                  <div className="absolute bottom-2 left-2 h-6 w-6 border-b-2 border-l-2 border-emerald-400/60" />
+                  <div className="absolute bottom-2 right-2 h-6 w-6 border-b-2 border-r-2 border-emerald-400/60" />
+                </div>
+              </>
+            )}
             {analyzing && sharing && (
               <div className="absolute top-3 right-3 flex items-center gap-2 bg-black/70 backdrop-blur rounded-full px-3 py-1.5 text-xs">
                 <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
@@ -546,6 +570,7 @@ function CurrentSignal({
   }
   const isCall = row.signal === "CALL";
   const isPut = row.signal === "PUT";
+  const active = isCall || isPut;
   const bg = isCall
     ? "from-emerald-500/20 to-emerald-500/5 border-emerald-500/40"
     : isPut
@@ -553,15 +578,33 @@ function CurrentSignal({
       : "from-white/5 to-transparent border-white/10";
   const Icon = isCall ? TrendingUp : isPut ? TrendingDown : Minus;
   const color = isCall ? "text-emerald-400" : isPut ? "text-red-400" : "text-white/60";
+  const glow = isCall
+    ? "shadow-[0_0_40px_rgba(52,211,153,0.35)]"
+    : isPut
+      ? "shadow-[0_0_40px_rgba(248,113,113,0.35)]"
+      : "";
 
   return (
-    <div className={`rounded-xl bg-gradient-to-br ${bg} border p-5`}>
+    <div
+      key={row.id}
+      className={`relative rounded-xl bg-gradient-to-br ${bg} border p-5 ${glow} ${active ? "animate-signal-pop" : ""}`}
+    >
+      {active && (
+        <div
+          className={`pointer-events-none absolute inset-0 rounded-xl border-2 ${
+            isCall ? "border-emerald-400/60" : "border-red-400/60"
+          } animate-ping-slow`}
+        />
+      )}
       <div className="flex items-center justify-between">
         <span className="text-xs uppercase tracking-wider text-white/50">Sinal atual</span>
         <span className="text-xs text-white/40">{row.latencyMs}ms</span>
       </div>
       <div className="mt-3 flex items-center gap-3">
-        <Icon className={`h-10 w-10 ${color}`} strokeWidth={2.5} />
+        <Icon
+          className={`h-10 w-10 ${color} ${active ? "animate-bounce-short" : ""}`}
+          strokeWidth={2.5}
+        />
         <div>
           <div className={`text-4xl font-black ${color} leading-none`}>{row.signal}</div>
           <div className="text-sm text-white/60 mt-1">{row.confidence}% de confiança</div>
@@ -576,10 +619,22 @@ function CurrentSignal({
         />
       </div>
       <p className="mt-3 text-sm text-white/70">{row.reason}</p>
-      {lockRemaining > 0 && (isCall || isPut) && (
-        <div className="mt-4 flex items-center justify-between rounded-lg bg-black/40 border border-white/10 px-3 py-2">
-          <span className="text-xs uppercase tracking-wider text-white/50">Aguardando fechamento M1</span>
-          <span className={`text-lg font-bold tabular-nums ${color}`}>{lockRemaining}s</span>
+      {lockRemaining > 0 && active && (
+        <div className="mt-4 rounded-lg bg-black/40 border border-white/10 px-3 py-3">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-xs uppercase tracking-wider text-white/50">
+              Aguardando fechamento M1
+            </span>
+            <span className={`text-lg font-bold tabular-nums ${color}`}>{lockRemaining}s</span>
+          </div>
+          <div className="h-1 rounded-full bg-white/10 overflow-hidden">
+            <div
+              className={`h-full transition-all duration-500 ${
+                isCall ? "bg-emerald-400" : "bg-red-400"
+              }`}
+              style={{ width: `${(lockRemaining / 60) * 100}%` }}
+            />
+          </div>
         </div>
       )}
       {row.outcome && row.outcome !== null && (

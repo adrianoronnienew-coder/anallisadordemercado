@@ -38,11 +38,11 @@ Analise o gráfico de candles na imagem seguindo este checklist RIGOROSO, candle
 4. CONTEXTO: Rompimento de suporte/resistência? Pullback numa tendência forte? Exaustão?
 5. CONTRA-SINAIS: Há divergência, pavio de rejeição contra a direção pretendida, ou candle indeciso?
 
-REGRAS DE DECISÃO (SEJA MUITO SELETIVO):
-- Só emita CALL se: tendência de alta clara + candle atual verde forte + sem pavio superior grande + sem sinais de exaustão. Confidence mínimo 75.
-- Só emita PUT se: tendência de baixa clara + candle atual vermelho forte + sem pavio inferior grande + sem sinais de exaustão. Confidence mínimo 75.
-- Em QUALQUER dúvida, mercado lateral, candles pequenos/indecisos, próximo de S/R sem definição, ou setup fraco → WAIT com confidence baixo.
-- É MELHOR emitir 10 WAITs seguidos do que 1 sinal ruim.${statsBlock}${lessonsBlock}
+REGRAS DE DECISÃO (SEJA SELETIVO, MAS NÃO PARALISADO):
+- Emita CALL quando: tendência de alta ou reversão de baixa clara + candle atual verde com corpo dominante + sem pavio superior grande contrário. Confidence mínimo 68.
+- Emita PUT quando: tendência de baixa ou reversão de alta clara + candle atual vermelho com corpo dominante + sem pavio inferior grande contrário. Confidence mínimo 68.
+- Em mercado totalmente lateral, doji puro, ou sinais conflitantes → WAIT.
+- Busque oportunidades ativamente: em ~1 minuto de gráfico costuma haver ao menos um setup razoável. Não seja excessivamente conservador.${statsBlock}${lessonsBlock}
 
 Retorne APENAS um JSON válido (sem markdown, sem \`\`\`):
 {"signal":"CALL"|"PUT"|"WAIT","confidence":0-100,"reason":"máx 14 palavras em português explicando o setup"}`;
