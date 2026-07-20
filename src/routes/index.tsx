@@ -316,8 +316,26 @@ function Index() {
         setError(null);
         backoffMs = 0;
 
-        const signal: SignalKind =
+        const rawSignal: SignalKind =
           res.signal !== "WAIT" && res.confidence < MIN_CONFIDENCE ? "WAIT" : res.signal;
+
+        // Confirmação em 2 frames: só dispara se o mesmo lado for detectado
+        // duas análises seguidas dentro de 10s.
+        let signal: SignalKind = "WAIT";
+        let confirmedReason = res.reason;
+        if (rawSignal === "CALL" || rawSignal === "PUT") {
+          const last = lastCandidateRef.current;
+          const fresh = last && Date.now() - last.ts < 10000;
+          if (fresh && last!.signal === rawSignal) {
+            signal = rawSignal;
+            lastCandidateRef.current = null;
+          } else {
+            lastCandidateRef.current = { signal: rawSignal, ts: Date.now() };
+            confirmedReason = `Candidato ${rawSignal} (${res.confidence}%) — aguardando confirmação`;
+          }
+        } else {
+          lastCandidateRef.current = null;
+        }
 
         const row: SignalRow = {
           id: crypto.randomUUID(),
@@ -325,16 +343,18 @@ function Index() {
           signal,
           confidence: res.confidence,
           reason:
-            signal === "WAIT" && res.signal !== "WAIT"
-              ? `Confiança baixa (${res.confidence}%) — aguardando setup mais claro`
-              : res.reason,
+            signal === "WAIT" && rawSignal !== "WAIT"
+              ? confirmedReason
+              : signal === "WAIT" && res.signal !== "WAIT"
+                ? `Confiança baixa (${res.confidence}%) — aguardando setup mais claro`
+                : res.reason,
           latencyMs: res.latencyMs,
           outcome: null,
         };
         setCurrent(row);
         setHistory((h) => [row, ...h].slice(0, 30));
 
-        if (signal !== "WAIT" && res.confidence >= MIN_CONFIDENCE) {
+        if (signal !== "WAIT") {
           if (signal === "CALL") alertCall();
           else alertPut();
           pendingTradeRef.current = row;
