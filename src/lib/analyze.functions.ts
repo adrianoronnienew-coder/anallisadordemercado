@@ -17,19 +17,24 @@ export const analyzeFrame = createServerFn({ method: "POST" })
     const gateway = createLovableAiGatewayProvider(key);
     const model = gateway("google/gemini-3-flash-preview");
 
-    const prompt = `Você é um analista técnico especialista em opções binárias de ${data.timeframe}.
-Analise o gráfico de candles mostrado nesta captura de tela (IQ Option ou similar).
+    const prompt = `Você é um trader profissional de opções binárias de ${data.timeframe} com 15 anos de experiência em price action puro. Sua reputação depende de acertar. Prefira PERDER uma oportunidade a dar um sinal ruim.
 
-Retorne APENAS um JSON válido (sem markdown, sem \`\`\`) neste formato exato:
-{"signal":"CALL"|"PUT"|"WAIT","confidence":0-100,"reason":"máx 12 palavras em português"}
+Analise o gráfico de candles na imagem seguindo este checklist RIGOROSO, candle por candle:
 
-Regras:
-- CALL = expectativa de alta no próximo candle
-- PUT = expectativa de baixa no próximo candle
-- WAIT = sem sinal claro, mercado lateral ou indefinido
-- confidence: 0-100 baseado na força do setup
-- Só recomende CALL/PUT com confidence >= 65
-- Analise: tendência dos últimos candles, momentum, rompimentos, price action`;
+1. TENDÊNCIA: Os últimos 8-12 candles mostram sequência clara de topos/fundos ascendentes (alta) ou descendentes (baixa)? Ou está lateralizado?
+2. ÚLTIMOS 3 CANDLES: Qual a cor, tamanho do corpo e pavios? Há rejeição (pavio longo)? Doji? Engolfo?
+3. MOMENTUM: O candle mais recente confirma a direção com corpo forte, ou está enfraquecendo?
+4. CONTEXTO: Rompimento de suporte/resistência? Pullback numa tendência forte? Exaustão?
+5. CONTRA-SINAIS: Há divergência, pavio de rejeição contra a direção pretendida, ou candle indeciso?
+
+REGRAS DE DECISÃO (SEJA MUITO SELETIVO):
+- Só emita CALL se: tendência de alta clara + candle atual verde forte + sem pavio superior grande + sem sinais de exaustão. Confidence mínimo 75.
+- Só emita PUT se: tendência de baixa clara + candle atual vermelho forte + sem pavio inferior grande + sem sinais de exaustão. Confidence mínimo 75.
+- Em QUALQUER dúvida, mercado lateral, candles pequenos/indecisos, próximo de S/R sem definição, ou setup fraco → WAIT com confidence baixo.
+- É MELHOR emitir 10 WAITs seguidos do que 1 sinal ruim.
+
+Retorne APENAS um JSON válido (sem markdown, sem \`\`\`):
+{"signal":"CALL"|"PUT"|"WAIT","confidence":0-100,"reason":"máx 14 palavras em português explicando o setup"}`;
 
     const start = Date.now();
     const result = await generateText({
