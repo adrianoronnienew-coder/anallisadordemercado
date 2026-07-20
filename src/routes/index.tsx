@@ -107,6 +107,15 @@ function Index() {
     setStats(s);
   }, []);
 
+  // Live countdown ticker for lock (independent of loop)
+  useEffect(() => {
+    const id = setInterval(() => {
+      const remaining = Math.max(0, Math.ceil((lockUntilRef.current - Date.now()) / 1000));
+      setLockRemaining((prev) => (prev !== remaining ? remaining : prev));
+    }, 250);
+    return () => clearInterval(id);
+  }, []);
+
   // ==== Efeitos sonoros ====
   const playTone = useCallback(
     (steps: { freq: number; dur: number; delay: number; type?: OscillatorType; gain?: number }[]) => {
