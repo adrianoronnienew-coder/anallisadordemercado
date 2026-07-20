@@ -304,7 +304,7 @@ function Index() {
 
         {/* Sinal atual + histórico */}
         <aside className="col-span-12 lg:col-span-4 space-y-4">
-          <CurrentSignal row={current} analyzing={analyzing} />
+          <CurrentSignal row={current} analyzing={analyzing} lockRemaining={lockRemaining} />
           <div className="rounded-xl bg-white/[0.03] border border-white/10 p-4">
             <h3 className="text-xs font-semibold uppercase tracking-wider text-white/50 mb-3">
               Histórico
