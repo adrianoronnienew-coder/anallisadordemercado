@@ -330,7 +330,15 @@ function Index() {
   );
 }
 
-function CurrentSignal({ row, analyzing }: { row: SignalRow | null; analyzing: boolean }) {
+function CurrentSignal({
+  row,
+  analyzing,
+  lockRemaining,
+}: {
+  row: SignalRow | null;
+  analyzing: boolean;
+  lockRemaining: number;
+}) {
   if (!row) {
     return (
       <div className="rounded-xl bg-white/[0.03] border border-white/10 p-6 text-center">
@@ -370,6 +378,12 @@ function CurrentSignal({ row, analyzing }: { row: SignalRow | null; analyzing: b
         />
       </div>
       <p className="mt-3 text-sm text-white/70">{row.reason}</p>
+      {lockRemaining > 0 && (isCall || isPut) && (
+        <div className="mt-4 flex items-center justify-between rounded-lg bg-black/40 border border-white/10 px-3 py-2">
+          <span className="text-xs uppercase tracking-wider text-white/50">Aguardando fechamento M1</span>
+          <span className={`text-lg font-bold tabular-nums ${color}`}>{lockRemaining}s</span>
+        </div>
+      )}
     </div>
   );
 }
