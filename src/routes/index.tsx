@@ -110,7 +110,10 @@ function Index() {
   }, []);
 
   const loop = useCallback(async () => {
+    const MIN_INTERVAL_MS = 2500; // throttle p/ respeitar rate limit do gateway
+    let backoffMs = 0;
     while (runningRef.current) {
+      const cycleStart = Date.now();
       const frame = captureFrame();
       if (!frame) {
         await new Promise((r) => setTimeout(r, 200));
@@ -120,6 +123,8 @@ function Index() {
       try {
         const res = await analyze({ data: { image: frame, timeframe: "1min" } });
         setAnalyzing(false);
+        setError(null);
+        backoffMs = 0;
         const row: SignalRow = {
           id: crypto.randomUUID(),
           ts: Date.now(),
@@ -137,8 +142,21 @@ function Index() {
         if (res.signal === "WAIT") lastAlertRef.current = null;
       } catch (e: any) {
         setAnalyzing(false);
-        setError(e?.message ?? "Erro na análise");
-        await new Promise((r) => setTimeout(r, 1000));
+        const msg = String(e?.message ?? "");
+        const is429 = /429|too many|rate/i.test(msg);
+        if (is429) {
+          backoffMs = Math.min(backoffMs ? backoffMs * 2 : 4000, 30000);
+          setError(`Rate limit atingido — aguardando ${Math.round(backoffMs / 1000)}s…`);
+        } else {
+          backoffMs = 1500;
+          setError(msg || "Erro na análise");
+        }
+        await new Promise((r) => setTimeout(r, backoffMs));
+        continue;
+      }
+      const elapsed = Date.now() - cycleStart;
+      if (elapsed < MIN_INTERVAL_MS) {
+        await new Promise((r) => setTimeout(r, MIN_INTERVAL_MS - elapsed));
       }
     }
   }, [analyze, beep, captureFrame]);
