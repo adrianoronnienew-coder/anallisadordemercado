@@ -21,6 +21,8 @@ import {
   Waves,
   Target,
   TriangleAlert,
+  Clock3,
+  Crosshair,
 } from "lucide-react";
 
 export const Route = createFileRoute("/")({
@@ -56,6 +58,13 @@ type TechnicalReading = {
   bias: "CALL" | "PUT" | "NEUTRAL";
   confluences: string[];
   warnings: string[];
+  overlay: {
+    supportY: number | null;
+    resistanceY: number | null;
+    trendStart: { x: number; y: number } | null;
+    trendEnd: { x: number; y: number } | null;
+    entry: { x: number; y: number } | null;
+  };
 };
 type SignalRow = {
   id: string;
@@ -68,6 +77,7 @@ type SignalRow = {
   lesson?: string;
   candidateSignal?: "CALL" | "PUT";
   analysis?: TechnicalReading;
+  expirationMinutes: number;
 };
 
 const LESSONS_KEY = "sv_lessons_v1";
@@ -129,6 +139,11 @@ function Index() {
   const [lockRemaining, setLockRemaining] = useState(0);
   const [stats, setStats] = useState<{ wins: number; losses: number }>({ wins: 0, losses: 0 });
   const [soundReady, setSoundReady] = useState(false);
+  const [expirationMinutes, setExpirationMinutes] = useState(1);
+  const expirationRef = useRef(1);
+  const [analysisStage, setAnalysisStage] = useState("Parado");
+  const [lastAnalysisAt, setLastAnalysisAt] = useState<number | null>(null);
+  const [nextAnalysisIn, setNextAnalysisIn] = useState(0);
 
   useEffect(() => {
     soundRef.current = sound;
@@ -146,6 +161,7 @@ function Index() {
     const id = setInterval(() => {
       const remaining = Math.max(0, Math.ceil((lockUntilRef.current - Date.now()) / 1000));
       setLockRemaining((prev) => (prev !== remaining ? remaining : prev));
+      setNextAnalysisIn((prev) => (runningRef.current && prev > 0 ? Math.max(0, prev - 0.25) : prev));
     }, 250);
     return () => clearInterval(id);
   }, []);
@@ -213,6 +229,10 @@ function Index() {
         { freq: 880, dur: 0.12, delay: 0.13 },
         { freq: 1175, dur: 0.22, delay: 0.26 },
       ]),
+    [playTone],
+  );
+  const alertCandidate = useCallback(
+    () => playTone([{ freq: 620, dur: 0.1, delay: 0, type: "triangle", gain: 0.12 }]),
     [playTone],
   );
   const alertPut = useCallback(
@@ -310,6 +330,7 @@ function Index() {
           image: frame,
           signal: pending.signal as "CALL" | "PUT",
           reason: pending.reason,
+          expirationMinutes: pending.expirationMinutes,
         },
       });
       // Atualiza histórico e sinal atual
@@ -345,7 +366,6 @@ function Index() {
 
   const loop = useCallback(async () => {
     const MIN_INTERVAL_MS = 2500;
-    const CYCLE_LOCK_MS = 60000;
     const MIN_CONFIDENCE = 70;
     const CANDIDATE_TTL_MS = 45000;
     let backoffMs = 0;
@@ -379,16 +399,21 @@ function Index() {
         continue;
       }
       setAnalyzing(true);
+      setAnalysisStage("Imagem capturada · enviando para análise");
       try {
         const res = await analyze({
           data: {
             image: frame,
             timeframe: "1min",
+            expirationMinutes: expirationRef.current,
             lessons: lessonsRef.current.join("\n") || undefined,
             stats: statsRef.current,
           },
         });
         setAnalyzing(false);
+        setAnalysisStage("Leitura concluída");
+        setLastAnalysisAt(Date.now());
+        setNextAnalysisIn(MIN_INTERVAL_MS / 1000);
         setError(null);
         backoffMs = 0;
 
@@ -408,6 +433,7 @@ function Index() {
           } else {
             lastCandidateRef.current = { signal: rawSignal, ts: Date.now(), remainingChecks: 3 };
             candidateSignal = rawSignal;
+            alertCandidate();
             confirmedReason = `Candidato ${rawSignal} (${res.confidence}%) — aguardando confirmação`;
           }
         } else {
@@ -436,6 +462,7 @@ function Index() {
           outcome: null,
           candidateSignal,
           analysis: res.analysis,
+          expirationMinutes: expirationRef.current,
         };
         setCurrent(row);
         setHistory((h) => [row, ...h].slice(0, 30));
@@ -444,9 +471,10 @@ function Index() {
           if (signal === "CALL") alertCall();
           else alertPut();
           pendingTradeRef.current = row;
-          lockUntilRef.current = Date.now() + CYCLE_LOCK_MS;
+          const cycleLockMs = expirationRef.current * 60000;
+          lockUntilRef.current = Date.now() + cycleLockMs;
           evaluateAtRef.current = lockUntilRef.current;
-          setLockRemaining(Math.ceil(CYCLE_LOCK_MS / 1000));
+          setLockRemaining(Math.ceil(cycleLockMs / 1000));
         }
       } catch (e: any) {
         setAnalyzing(false);
@@ -455,9 +483,11 @@ function Index() {
         if (is429) {
           backoffMs = Math.min(backoffMs ? backoffMs * 2 : 4000, 30000);
           setError(`Rate limit atingido — aguardando ${Math.round(backoffMs / 1000)}s…`);
+          setAnalysisStage("Pausado pelo limite do serviço");
         } else {
           backoffMs = 1500;
           setError(msg || "Erro na análise");
+          setAnalysisStage("Falha na análise");
         }
         await new Promise((r) => setTimeout(r, backoffMs));
         continue;
@@ -467,18 +497,20 @@ function Index() {
         await new Promise((r) => setTimeout(r, MIN_INTERVAL_MS - elapsed));
       }
     }
-  }, [analyze, alertCall, alertPut, captureFrame, lockRemaining, runEvaluation]);
+  }, [analyze, alertCall, alertCandidate, alertPut, captureFrame, lockRemaining, runEvaluation]);
 
   const toggleRun = useCallback(() => {
     if (running) {
       runningRef.current = false;
       setRunning(false);
+      setAnalysisStage("Análise pausada");
       return;
     }
     if (!sharing) return;
     if (soundRef.current) unlockSound();
     runningRef.current = true;
     setRunning(true);
+    setAnalysisStage("Preparando primeira captura");
     lockUntilRef.current = 0;
     setLockRemaining(0);
     void loop();
@@ -559,6 +591,9 @@ function Index() {
         <section className="col-span-12 lg:col-span-8 space-y-4">
           <div className="relative rounded-xl overflow-hidden bg-black border border-white/10 aspect-video">
             <video ref={videoRef} className="w-full h-full object-contain" muted playsInline />
+            {sharing && current?.analysis && (
+              <ChartOverlay reading={current.analysis} signal={current.candidateSignal ?? current.signal} />
+            )}
             {!sharing && (
               <div className="absolute inset-0 flex flex-col items-center justify-center gap-4 bg-gradient-to-br from-slate-900 to-black">
                 <div className="text-center max-w-md px-6">
@@ -583,7 +618,7 @@ function Index() {
               <>
                 {/* Scanning sweep overlay */}
                 <div className="pointer-events-none absolute inset-0 overflow-hidden">
-                  {running && (
+                  {running && !current?.analysis && (
                     <div className="absolute inset-x-0 h-24 -top-24 bg-gradient-to-b from-transparent via-emerald-400/20 to-transparent animate-scan" />
                   )}
                   {/* Corner brackets */}
@@ -601,6 +636,43 @@ function Index() {
               </div>
             )}
           </div>
+
+          {sharing && (
+            <div className="grid gap-3 border border-white/10 bg-white/[0.03] p-3 sm:grid-cols-[1fr_auto]">
+              <div className="flex min-w-0 items-center gap-3">
+                <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${analyzing ? "bg-amber-300 animate-pulse" : running ? "bg-emerald-400" : "bg-white/30"}`} />
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-semibold">{analysisStage}</p>
+                  <p className="text-xs text-white/45">
+                    {lastAnalysisAt ? `Última leitura ${new Date(lastAnalysisAt).toLocaleTimeString("pt-BR", { hour12: false })}` : "Nenhuma leitura recebida"}
+                    {running && !analyzing && nextAnalysisIn > 0 ? ` · próxima em ${Math.ceil(nextAnalysisIn)}s` : ""}
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <Clock3 className="h-4 w-4 text-cyan-300" />
+                <span className="text-xs font-semibold uppercase text-white/50">Expiração</span>
+                <div className="flex border border-white/10 bg-black/30 p-0.5">
+                  {[1, 2, 3, 5].map((minutes) => (
+                    <Button
+                      key={minutes}
+                      type="button"
+                      size="sm"
+                      variant="ghost"
+                      disabled={lockRemaining > 0}
+                      onClick={() => {
+                        expirationRef.current = minutes;
+                        setExpirationMinutes(minutes);
+                      }}
+                      className={`h-7 min-w-9 px-2 text-xs ${expirationMinutes === minutes ? "bg-cyan-400 text-black hover:bg-cyan-300" : "text-white/60 hover:bg-white/10 hover:text-white"}`}
+                    >
+                      {minutes}m
+                    </Button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
 
           <div className="flex gap-2 flex-wrap">
             {sharing && (
