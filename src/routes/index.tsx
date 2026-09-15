@@ -23,6 +23,9 @@ import {
   TriangleAlert,
   Clock3,
   Crosshair,
+  Download,
+  RotateCcw,
+  Search,
 } from "lucide-react";
 
 export const Route = createFileRoute("/")({
@@ -50,8 +53,13 @@ type Outcome = "WIN" | "LOSS" | "UNKNOWN" | null;
 type TechnicalReading = {
   trend: string;
   ema: string;
+  ema50: string;
   momentum: string;
+  rsi: string;
   volatility: string;
+  bollinger: string;
+  atr: string;
+  adx: string;
   candlePattern: string;
   supportResistance: string;
   macd: string;
@@ -62,6 +70,9 @@ type TechnicalReading = {
   bias: "CALL" | "PUT" | "NEUTRAL";
   confluences: string[];
   warnings: string[];
+  checksPassed: string[];
+  checksPending: string[];
+  nextCondition: string;
   overlay: {
     supportY: number | null;
     resistanceY: number | null;
@@ -86,6 +97,7 @@ type SignalRow = {
 
 const LESSONS_KEY = "sv_lessons_v1";
 const STATS_KEY = "sv_stats_v1";
+const BACKTEST_KEY = "sv_backtest_v1";
 const MAX_LESSONS = 6;
 
 function loadLessons(): string[] {
@@ -134,6 +146,9 @@ function Index() {
   const audioContextRef = useRef<AudioContext | null>(null);
   const stableOverlayRef = useRef<TechnicalReading["overlay"] | null>(null);
   const overlayLockedUntilRef = useRef(0);
+  const zoomRef = useRef(1);
+  const focusXRef = useRef(50);
+  const focusYRef = useRef(50);
 
   const [sharing, setSharing] = useState(false);
   const [running, setRunning] = useState(false);
@@ -151,6 +166,9 @@ function Index() {
   const [lastAnalysisAt, setLastAnalysisAt] = useState<number | null>(null);
   const [nextAnalysisIn, setNextAnalysisIn] = useState(0);
   const [overlayLockedUntil, setOverlayLockedUntil] = useState(0);
+  const [zoom, setZoom] = useState(1);
+  const [focusX, setFocusX] = useState(50);
+  const [focusY, setFocusY] = useState(50);
 
   useEffect(() => {
     soundRef.current = sound;
@@ -161,6 +179,10 @@ function Index() {
     const s = loadStats();
     statsRef.current = s;
     setStats(s);
+    try {
+      const saved = JSON.parse(localStorage.getItem(BACKTEST_KEY) || "[]") as SignalRow[];
+      setHistory(saved);
+    } catch {}
   }, []);
 
   // Live countdown ticker for lock (independent of loop)
@@ -322,13 +344,20 @@ function Index() {
     const video = videoRef.current;
     const canvas = canvasRef.current;
     if (!video || !canvas || !video.videoWidth) return null;
-    const targetW = Math.min(900, video.videoWidth);
+    const sourceScale = zoomRef.current;
+    const sourceW = video.videoWidth / sourceScale;
+    const sourceH = video.videoHeight / sourceScale;
+    const maxX = video.videoWidth - sourceW;
+    const maxY = video.videoHeight - sourceH;
+    const sourceX = maxX * (focusXRef.current / 100);
+    const sourceY = maxY * (focusYRef.current / 100);
+    const targetW = Math.min(900, sourceW);
     const scale = targetW / video.videoWidth;
     canvas.width = targetW;
-    canvas.height = Math.round(video.videoHeight * scale);
+    canvas.height = Math.round(sourceH * (targetW / sourceW));
     const ctx = canvas.getContext("2d");
     if (!ctx) return null;
-    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    ctx.drawImage(video, sourceX, sourceY, sourceW, sourceH, 0, 0, canvas.width, canvas.height);
     return canvas.toDataURL("image/jpeg", 0.6);
   }, []);
 
@@ -348,8 +377,15 @@ function Index() {
       });
       // Atualiza histórico e sinal atual
       setHistory((h) =>
-        h.map((r) => (r.id === pending.id ? { ...r, outcome: res.outcome, lesson: res.lesson } : r)),
+        h.map((r) => {
+          const next = r.id === pending.id ? { ...r, outcome: res.outcome, lesson: res.lesson } : r;
+          return next;
+        }),
       );
+      setHistory((h) => {
+        try { localStorage.setItem(BACKTEST_KEY, JSON.stringify(h)); } catch {}
+        return h;
+      });
       setCurrent((c) =>
         c && c.id === pending.id ? { ...c, outcome: res.outcome, lesson: res.lesson } : c,
       );
@@ -443,6 +479,7 @@ function Index() {
           if (fresh && last.signal === rawSignal) {
             signal = rawSignal;
             lastCandidateRef.current = null;
+            confirmedReason = `${rawSignal === "CALL" ? "COMPRE AGORA" : "VENDA AGORA"} — ${res.reason.replace(/^(COMPRE|VENDA) AGORA\s*[—-]?\s*/i, "")}`;
           } else {
             lastCandidateRef.current = { signal: rawSignal, ts: Date.now(), remainingChecks: 3 };
             candidateSignal = rawSignal;
@@ -554,6 +591,28 @@ function Index() {
     setStats({ wins: 0, losses: 0 });
   }, []);
 
+  const refreshStructure = useCallback(() => {
+    stableOverlayRef.current = null;
+    overlayLockedUntilRef.current = 0;
+    setOverlayLockedUntil(0);
+    setAnalysisStage("Estrutura liberada para nova leitura");
+  }, []);
+
+  const updateZoom = useCallback((value: number) => {
+    zoomRef.current = value;
+    setZoom(value);
+  }, []);
+
+  const updateFocusX = useCallback((value: number) => {
+    focusXRef.current = value;
+    setFocusX(value);
+  }, []);
+
+  const updateFocusY = useCallback((value: number) => {
+    focusYRef.current = value;
+    setFocusY(value);
+  }, []);
+
   useEffect(() => () => stopSharing(), [stopSharing]);
 
   const total = stats.wins + stats.losses;
@@ -620,7 +679,13 @@ function Index() {
       <main className="grid grid-cols-12 gap-4 p-4">
         <section className="col-span-12 lg:col-span-8 space-y-4">
           <div className="relative rounded-xl overflow-hidden bg-black border border-white/10 aspect-video">
-            <video ref={videoRef} className="w-full h-full object-contain" muted playsInline />
+            <video
+              ref={videoRef}
+              className="h-full w-full object-contain transition-transform duration-200"
+              style={{ transform: `scale(${zoom})`, transformOrigin: `${focusX}% ${focusY}%` }}
+              muted
+              playsInline
+            />
             {sharing && current?.analysis && (
               <ChartOverlay
                 reading={current.analysis}
@@ -709,6 +774,25 @@ function Index() {
             </div>
           )}
 
+          {sharing && (
+            <div className="grid gap-3 border border-white/10 bg-white/[0.03] p-3 sm:grid-cols-[auto_1fr_1fr_auto] sm:items-center">
+              <div className="flex items-center gap-2 text-xs font-semibold text-white/60">
+                <Search className="h-4 w-4 text-cyan-300" /> Foco {zoom.toFixed(1)}×
+              </div>
+              <label className="text-[10px] font-semibold uppercase text-white/40">
+                Zoom
+                <input aria-label="Zoom do gráfico" className="mt-1 block w-full accent-cyan-400" type="range" min="1" max="2.5" step="0.1" value={zoom} onChange={(event) => updateZoom(Number(event.target.value))} />
+              </label>
+              <div className="grid grid-cols-2 gap-2">
+                <label className="text-[10px] font-semibold uppercase text-white/40">Horizontal<input aria-label="Foco horizontal" className="mt-1 block w-full accent-cyan-400" type="range" min="0" max="100" value={focusX} disabled={zoom === 1} onChange={(event) => updateFocusX(Number(event.target.value))} /></label>
+                <label className="text-[10px] font-semibold uppercase text-white/40">Vertical<input aria-label="Foco vertical" className="mt-1 block w-full accent-cyan-400" type="range" min="0" max="100" value={focusY} disabled={zoom === 1} onChange={(event) => updateFocusY(Number(event.target.value))} /></label>
+              </div>
+              <Button type="button" variant="outline" size="sm" onClick={refreshStructure} className="border-white/10 bg-white/5 text-white hover:bg-white/10">
+                <RotateCcw className="mr-2 h-4 w-4" /> Recalcular linhas
+              </Button>
+            </div>
+          )}
+
           <div className="flex gap-2 flex-wrap">
             {sharing && (
               <>
@@ -758,6 +842,10 @@ function Index() {
           )}
 
           <TechnicalPanel reading={current?.analysis} candidate={current?.candidateSignal} />
+          <BacktestPanel history={history} onClear={() => {
+            setHistory([]);
+            try { localStorage.removeItem(BACKTEST_KEY); } catch {}
+          }} />
         </section>
 
         <aside className="col-span-12 lg:col-span-4 space-y-4">
