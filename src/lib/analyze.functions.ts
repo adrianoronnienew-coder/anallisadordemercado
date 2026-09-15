@@ -16,8 +16,13 @@ const Input = z.object({
 const TechnicalReading = z.object({
   trend: z.string(),
   ema: z.string(),
+  ema50: z.string(),
   momentum: z.string(),
+  rsi: z.string(),
   volatility: z.string(),
+  bollinger: z.string(),
+  atr: z.string(),
+  adx: z.string(),
   candlePattern: z.string(),
   supportResistance: z.string(),
   macd: z.string(),
@@ -28,6 +33,9 @@ const TechnicalReading = z.object({
   bias: z.enum(["CALL", "PUT", "NEUTRAL"]),
   confluences: z.array(z.string()).max(10),
   warnings: z.array(z.string()).max(5),
+  checksPassed: z.array(z.string()).max(10),
+  checksPending: z.array(z.string()).max(10),
+  nextCondition: z.string(),
   overlay: z.object({
     supportY: z.number().min(0).max(100).nullable(),
     resistanceY: z.number().min(0).max(100).nullable(),
@@ -47,8 +55,13 @@ const AnalysisResponse = z.object({
 const EMPTY_ANALYSIS = {
   trend: "Não identificada",
   ema: "Não identificada",
+  ema50: "Não identificada",
   momentum: "Não identificado",
+  rsi: "Não identificável com segurança",
   volatility: "Não identificada",
+  bollinger: "Não identificável com segurança",
+  atr: "Não identificável com segurança",
+  adx: "Não identificável com segurança",
   candlePattern: "Nenhum padrão confirmado",
   supportResistance: "Zonas não identificadas",
   macd: "Não visível no gráfico",
@@ -59,6 +72,9 @@ const EMPTY_ANALYSIS = {
   bias: "NEUTRAL" as const,
   confluences: [] as string[],
   warnings: ["Leitura técnica indisponível"],
+  checksPassed: [],
+  checksPending: ["Imagem técnica legível"],
+  nextCondition: "Aguardar gráfico legível e confluências confirmadas",
   overlay: {
     supportY: null,
     resistanceY: null,
@@ -99,16 +115,19 @@ A) ESTRUTURA DE MERCADO
 B) MÉDIAS MÓVEIS ESTIMADAS
    - EMA rápida (~9 períodos): média dos últimos 9 fechamentos. Preço acima = viés compra, abaixo = venda.
    - EMA lenta (~21 períodos): direção geral. Cruzamento 9x21 = mudança de fase.
+   - EMA 50: filtro de tendência principal; CALL favorecido acima e PUT abaixo, sem usar isoladamente.
    - Distância preço vs EMA: muito esticado = risco de reversão/pullback.
 
-C) MOMENTUM (RSI mental, 14 períodos)
+C) MOMENTUM (RSI 14 e ADX estimados)
    - Sequência de candles verdes/vermelhos e tamanho dos corpos.
    - RSI estimado >70 = sobrecompra (evite CALL), <30 = sobrevenda (evite PUT).
    - Divergência: preço faz novo topo mas momentum enfraquece (corpos menores) → reversão provável.
+   - ADX/força: classifique como fraca, moderada ou forte; não invente valor numérico se não estiver visível.
 
-D) VOLATILIDADE (Bandas de Bollinger mentais)
+D) VOLATILIDADE (Bandas de Bollinger e ATR estimados)
    - Range dos últimos candles. Preço tocando extremo superior = reversão baixista provável, extremo inferior = alta.
    - Squeeze (candles pequenos comprimidos) = explosão iminente, aguarde direção.
+   - ATR: classifique a amplitude recente como baixa, normal ou alta; volatilidade excessiva bloqueia entrada.
 
 E) PADRÕES DE CANDLE (últimos 3)
    - Engolfo alta/baixa, martelo, estrela cadente, pin bar, doji de indecisão, harami.
@@ -147,15 +166,17 @@ Contra-sinais que ANULAM o trade mesmo com score alto:
    - OTC com movimento recente >3 candles fortes seguidos (exaustão iminente)
 
 ===== REGRAS DE DECISÃO =====
-- CALL: score ≥5, viés altista, sem contra-sinal, candle atual verde com corpo forte. Confidence 72-95 conforme força.
-- PUT: score ≥5, viés baixista, sem contra-sinal, candle atual vermelho com corpo forte. Confidence 72-95.
+- CALL: score ≥5, viés altista, sem contra-sinal, candle atual verde com corpo forte. Confidence 70-95 conforme força.
+- PUT: score ≥5, viés baixista, sem contra-sinal, candle atual vermelho com corpo forte. Confidence 70-95.
+- Quando houver CALL/PUT válido, use razão imperativa: "COMPRE AGORA — ..." ou "VENDA AGORA — ...".
+- Em WAIT, diga exatamente qual condição falta em nextCondition; não responda apenas com dúvida genérica.
 - Score <5, lateral, doji, indecisão, sinais mistos, próximo de S/R contrário → WAIT.
 - Na dúvida, SEMPRE WAIT. Um LOSS custa mais que 10 WAITs.${statsBlock}${lessonsBlock}
 
 Retorne APENAS JSON válido (sem markdown, sem \`\`\`). Todos os textos devem ser curtos e em português:
 As coordenadas do overlay são porcentagens (0 a 100) da imagem inteira. Posicione suporte e resistência na altura exata das zonas visíveis; a linha de tendência deve ligar dois pivôs reais; entry aponta para a vela atual. Use null quando não for possível localizar com segurança. Suporte, resistência e tendência são zonas estruturais: não os desloque por causa de uma única vela nova.
 
-{"signal":"CALL"|"PUT"|"WAIT","confidence":0-100,"reason":"máx 16 palavras","analysis":{"trend":"HH/HL, LH/LL ou lateral + direção","ema":"posição e relação estimada EMA9/EMA21","momentum":"força, RSI mental e divergência","volatility":"expansão, normal ou squeeze","candlePattern":"padrão dos 3 últimos candles e candle atual","supportResistance":"zona mais próxima e risco","macd":"leitura visível ou não visível","stochastic":"leitura visível ou não visível","fibonacci":"nível relevante ou não identificável","volume":"confirmação visível ou não visível","score":0-10,"bias":"CALL"|"PUT"|"NEUTRAL","confluences":["evidências objetivas a favor"],"warnings":["contra-sinais encontrados"],"overlay":{"supportY":0-100|null,"resistanceY":0-100|null,"trendStart":{"x":0-100,"y":0-100}|null,"trendEnd":{"x":0-100,"y":0-100}|null,"entry":{"x":0-100,"y":0-100}|null}}}`;
+{"signal":"CALL"|"PUT"|"WAIT","confidence":0-100,"reason":"máx 16 palavras","analysis":{"trend":"estrutura e direção","ema":"EMA9/EMA21 estimadas ou visíveis","ema50":"filtro EMA50 estimado ou visível","momentum":"força e divergência","rsi":"zona do RSI estimada ou visível","volatility":"expansão, normal ou squeeze","bollinger":"posição nas bandas estimada ou visível","atr":"amplitude baixa, normal ou alta","adx":"força fraca, moderada ou forte","candlePattern":"padrão dos 3 últimos candles e candle atual","supportResistance":"zona mais próxima e risco","macd":"leitura visível ou não visível","stochastic":"leitura visível ou não visível","fibonacci":"nível relevante ou não identificável","volume":"confirmação visível ou não visível","score":0-10,"bias":"CALL"|"PUT"|"NEUTRAL","confluences":["evidências objetivas a favor"],"warnings":["contra-sinais encontrados"],"checksPassed":["critérios aprovados"],"checksPending":["critérios ainda ausentes"],"nextCondition":"próxima condição objetiva para entrada","overlay":{"supportY":0-100|null,"resistanceY":0-100|null,"trendStart":{"x":0-100,"y":0-100}|null,"trendEnd":{"x":0-100,"y":0-100}|null,"entry":{"x":0-100,"y":0-100}|null}}}`;
 
     const start = Date.now();
     const result = await generateText({
