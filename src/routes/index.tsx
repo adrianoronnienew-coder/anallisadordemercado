@@ -151,7 +151,7 @@ function Index() {
   }, []);
 
   // ==== Efeitos sonoros ====
-  const unlockSound = useCallback(async () => {
+  const unlockSound = useCallback(() => {
     if (!soundRef.current) return false;
     try {
       const AudioContextCtor = window.AudioContext ??
@@ -159,9 +159,15 @@ function Index() {
       if (!AudioContextCtor) return false;
       const ctx = audioContextRef.current ?? new AudioContextCtor();
       audioContextRef.current = ctx;
-      if (ctx.state === "suspended") await ctx.resume();
-      setSoundReady(ctx.state === "running");
-      return ctx.state === "running";
+      if (ctx.state === "suspended") void ctx.resume();
+
+      // A fonte silenciosa, criada dentro do clique, desbloqueia áudio no Chrome/Safari.
+      const source = ctx.createBufferSource();
+      source.buffer = ctx.createBuffer(1, 1, 22050);
+      source.connect(ctx.destination);
+      source.start(0);
+      setSoundReady(true);
+      return true;
     } catch {
       setSoundReady(false);
       return false;
@@ -173,10 +179,11 @@ function Index() {
       if (!soundRef.current) return;
       try {
         const ctx = audioContextRef.current;
-        if (!ctx || ctx.state !== "running") {
+        if (!ctx) {
           setSoundReady(false);
           return;
         }
+        if (ctx.state === "suspended") void ctx.resume();
         const now = ctx.currentTime;
         steps.forEach((s) => {
           const osc = ctx.createOscillator();
@@ -235,8 +242,8 @@ function Index() {
     [playTone],
   );
 
-  const testSound = useCallback(async () => {
-    const ready = await unlockSound();
+  const testSound = useCallback(() => {
+    const ready = unlockSound();
     if (!ready) {
       setError("O navegador bloqueou o áudio. Toque novamente em Testar som.");
       return;
@@ -462,14 +469,14 @@ function Index() {
     }
   }, [analyze, alertCall, alertPut, captureFrame, lockRemaining, runEvaluation]);
 
-  const toggleRun = useCallback(async () => {
+  const toggleRun = useCallback(() => {
     if (running) {
       runningRef.current = false;
       setRunning(false);
       return;
     }
     if (!sharing) return;
-    if (soundRef.current) await unlockSound();
+    if (soundRef.current) unlockSound();
     runningRef.current = true;
     setRunning(true);
     lockUntilRef.current = 0;
