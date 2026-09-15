@@ -284,6 +284,7 @@ function Index() {
     }
     if (videoRef.current) videoRef.current.srcObject = null;
     setSharing(false);
+    setAnalysisStage("Tela desconectada");
   }, []);
 
   const startSharing = useCallback(async () => {
@@ -829,7 +830,7 @@ function CurrentSignal({
         <div className="mt-4 rounded-lg bg-black/40 border border-white/10 px-3 py-3">
           <div className="flex items-center justify-between mb-2">
             <span className="text-xs uppercase tracking-wider text-white/50">
-              Aguardando fechamento M1
+              Expiração da operação · {row.expirationMinutes}m
             </span>
             <span className={`text-lg font-bold tabular-nums ${color}`}>{lockRemaining}s</span>
           </div>
@@ -838,7 +839,7 @@ function CurrentSignal({
               className={`h-full transition-all duration-500 ${
                 isCall ? "bg-emerald-400" : "bg-red-400"
               }`}
-              style={{ width: `${(lockRemaining / 60) * 100}%` }}
+              style={{ width: `${Math.min(100, (lockRemaining / (row.expirationMinutes * 60)) * 100)}%` }}
             />
           </div>
         </div>
@@ -846,6 +847,77 @@ function CurrentSignal({
       {row.outcome && row.outcome !== null && (
         <OutcomeBadge outcome={row.outcome} lesson={row.lesson} />
       )}
+    </div>
+  );
+}
+
+function ChartOverlay({
+  reading,
+  signal,
+}: {
+  reading: TechnicalReading;
+  signal: SignalKind;
+}) {
+  const { overlay } = reading;
+  const activeSignal = signal === "CALL" || signal === "PUT";
+  const entry = overlay.entry ?? (activeSignal ? { x: 84, y: 50 } : null);
+  const isCall = signal === "CALL";
+  const signalColor = isCall ? "text-emerald-300" : "text-red-300";
+
+  return (
+    <div className="pointer-events-none absolute inset-0 overflow-hidden" aria-hidden="true">
+      {overlay.resistanceY !== null && (
+        <div
+          className="absolute left-[6%] right-[8%] border-t-2 border-red-400/80"
+          style={{ top: `${overlay.resistanceY}%` }}
+        >
+          <span className="absolute right-0 -translate-y-full bg-red-500/90 px-2 py-1 text-[10px] font-bold uppercase text-white">
+            Resistência
+          </span>
+        </div>
+      )}
+      {overlay.supportY !== null && (
+        <div
+          className="absolute left-[6%] right-[8%] border-t-2 border-emerald-400/80"
+          style={{ top: `${overlay.supportY}%` }}
+        >
+          <span className="absolute left-0 bg-emerald-500/90 px-2 py-1 text-[10px] font-bold uppercase text-black">
+            Suporte
+          </span>
+        </div>
+      )}
+      {overlay.trendStart && overlay.trendEnd && (
+        <svg className="absolute inset-0 h-full w-full text-cyan-300 drop-shadow-lg" viewBox="0 0 100 100" preserveAspectRatio="none">
+          <line
+            x1={overlay.trendStart.x}
+            y1={overlay.trendStart.y}
+            x2={overlay.trendEnd.x}
+            y2={overlay.trendEnd.y}
+            stroke="currentColor"
+            strokeWidth="0.45"
+            strokeDasharray="1.3 0.8"
+            vectorEffect="non-scaling-stroke"
+          />
+        </svg>
+      )}
+      {entry && activeSignal && (
+        <div className="absolute -translate-x-1/2 -translate-y-1/2" style={{ left: `${entry.x}%`, top: `${entry.y}%` }}>
+          <div className={`relative flex flex-col items-center ${signalColor}`}>
+            <span className={`absolute h-16 w-16 rounded-full border-2 ${isCall ? "border-emerald-300/70" : "border-red-300/70"} animate-ping-slow`} />
+            {isCall ? (
+              <TrendingUp className="h-12 w-12 animate-bounce-short drop-shadow-lg" strokeWidth={3} />
+            ) : (
+              <TrendingDown className="h-12 w-12 animate-bounce-short drop-shadow-lg" strokeWidth={3} />
+            )}
+            <span className={`mt-1 border px-2 py-1 text-xs font-black ${isCall ? "border-emerald-300 bg-emerald-500/90 text-black" : "border-red-300 bg-red-500/90 text-white"}`}>
+              {signal} · ENTRADA
+            </span>
+          </div>
+        </div>
+      )}
+      <div className="absolute bottom-3 left-3 flex items-center gap-2 border border-cyan-300/30 bg-black/75 px-2.5 py-1.5 text-[10px] font-semibold uppercase text-cyan-200 backdrop-blur-sm">
+        <Crosshair className="h-3.5 w-3.5" /> Linhas calculadas pela leitura atual
+      </div>
     </div>
   );
 }
