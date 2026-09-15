@@ -6,6 +6,7 @@ import { createLovableAiGatewayProvider } from "./ai-gateway.server";
 const Input = z.object({
   image: z.string().min(100),
   timeframe: z.string().default("1min"),
+  expirationMinutes: z.number().int().min(1).max(5).default(1),
   lessons: z.string().max(2000).optional(),
   stats: z
     .object({ wins: z.number(), losses: z.number() })
@@ -23,6 +24,13 @@ const TechnicalReading = z.object({
   bias: z.enum(["CALL", "PUT", "NEUTRAL"]),
   confluences: z.array(z.string()).max(7),
   warnings: z.array(z.string()).max(5),
+  overlay: z.object({
+    supportY: z.number().min(0).max(100).nullable(),
+    resistanceY: z.number().min(0).max(100).nullable(),
+    trendStart: z.object({ x: z.number().min(0).max(100), y: z.number().min(0).max(100) }).nullable(),
+    trendEnd: z.object({ x: z.number().min(0).max(100), y: z.number().min(0).max(100) }).nullable(),
+    entry: z.object({ x: z.number().min(0).max(100), y: z.number().min(0).max(100) }).nullable(),
+  }),
 });
 
 const AnalysisResponse = z.object({
@@ -43,6 +51,13 @@ const EMPTY_ANALYSIS = {
   bias: "NEUTRAL" as const,
   confluences: [] as string[],
   warnings: ["Leitura técnica indisponível"],
+  overlay: {
+    supportY: null,
+    resistanceY: null,
+    trendStart: null,
+    trendEnd: null,
+    entry: null,
+  },
 };
 
 export const analyzeFrame = createServerFn({ method: "POST" })
@@ -61,7 +76,7 @@ export const analyzeFrame = createServerFn({ method: "POST" })
       ? `\n\nAPRENDIZADO DE ORDENS ANTERIORES (evite repetir esses erros):\n${data.lessons}`
       : "";
 
-    const prompt = `Você é um trader profissional de opções binárias de ${data.timeframe} com 15 anos de experiência combinando price action, indicadores técnicos e análise multi-timeframe. Prefira PERDER oportunidade a dar sinal ruim.
+    const prompt = `Você é um trader profissional de opções binárias de ${data.timeframe} com 15 anos de experiência combinando price action, indicadores técnicos e análise multi-timeframe. A expiração escolhida é de ${data.expirationMinutes} minuto(s): avalie se o movimento tem sustentação por todo esse horizonte. Prefira PERDER oportunidade a dar sinal ruim.
 
 ATENÇÃO OTC: ativos "OTC" são sintéticos da corretora e revertem contra rompimentos "óbvios". Em OTC exija setup EXTRA claro e desconfie de movimentos amplos recentes — costumam ser armadilhas de liquidez.
 
@@ -119,7 +134,9 @@ Contra-sinais que ANULAM o trade mesmo com score alto:
 - Na dúvida, SEMPRE WAIT. Um LOSS custa mais que 10 WAITs.${statsBlock}${lessonsBlock}
 
 Retorne APENAS JSON válido (sem markdown, sem \`\`\`). Todos os textos devem ser curtos e em português:
-{"signal":"CALL"|"PUT"|"WAIT","confidence":0-100,"reason":"máx 16 palavras","analysis":{"trend":"HH/HL, LH/LL ou lateral + direção","ema":"posição e relação estimada EMA9/EMA21","momentum":"força, RSI mental e divergência","volatility":"expansão, normal ou squeeze","candlePattern":"padrão dos 3 últimos candles e candle atual","supportResistance":"zona mais próxima e risco","score":0-7,"bias":"CALL"|"PUT"|"NEUTRAL","confluences":["evidências objetivas a favor"],"warnings":["contra-sinais encontrados"]}}`;
+As coordenadas do overlay são porcentagens (0 a 100) da imagem inteira. Posicione suporte e resistência na altura exata das zonas visíveis; a linha de tendência deve ligar dois pivôs reais; entry aponta para a vela atual. Use null quando não for possível localizar com segurança.
+
+{"signal":"CALL"|"PUT"|"WAIT","confidence":0-100,"reason":"máx 16 palavras","analysis":{"trend":"HH/HL, LH/LL ou lateral + direção","ema":"posição e relação estimada EMA9/EMA21","momentum":"força, RSI mental e divergência","volatility":"expansão, normal ou squeeze","candlePattern":"padrão dos 3 últimos candles e candle atual","supportResistance":"zona mais próxima e risco","score":0-7,"bias":"CALL"|"PUT"|"NEUTRAL","confluences":["evidências objetivas a favor"],"warnings":["contra-sinais encontrados"],"overlay":{"supportY":0-100|null,"resistanceY":0-100|null,"trendStart":{"x":0-100,"y":0-100}|null,"trendEnd":{"x":0-100,"y":0-100}|null,"entry":{"x":0-100,"y":0-100}|null}}}`;
 
     const start = Date.now();
     const result = await generateText({
@@ -163,6 +180,7 @@ const OutcomeInput = z.object({
   image: z.string().min(100),
   signal: z.enum(["CALL", "PUT"]),
   reason: z.string().max(300),
+  expirationMinutes: z.number().int().min(1).max(5).default(1),
 });
 
 export const evaluateOutcome = createServerFn({ method: "POST" })
@@ -174,10 +192,10 @@ export const evaluateOutcome = createServerFn({ method: "POST" })
     const gateway = createLovableAiGatewayProvider(key);
     const model = gateway("google/gemini-3.8-flash");
 
-    const prompt = `Você é um auditor de operações de opções binárias M1. Uma ordem foi aberta a 1 minuto atrás com direção ${data.signal} (${data.signal === "CALL" ? "aposta em ALTA" : "aposta em BAIXA"}).
+    const prompt = `Você é um auditor de operações de opções binárias M1. Uma ordem foi aberta há ${data.expirationMinutes} minuto(s), com direção ${data.signal} (${data.signal === "CALL" ? "aposta em ALTA" : "aposta em BAIXA"}).
 Motivo original: "${data.reason}".
 
-Observe o gráfico atual. O último candle FECHADO (o mais à direita já concluído) representa o resultado da operação:
+Observe o gráfico atual. Compare o preço atual com o preço visual no momento da entrada, considerando a expiração de ${data.expirationMinutes} minuto(s):
 - Se ${data.signal} = CALL e o candle fechou ACIMA da abertura (verde) → WIN
 - Se ${data.signal} = PUT e o candle fechou ABAIXO da abertura (vermelho) → WIN
 - Caso contrário → LOSS
