@@ -23,6 +23,9 @@ import {
   TriangleAlert,
   Clock3,
   Crosshair,
+  Download,
+  RotateCcw,
+  Search,
 } from "lucide-react";
 
 export const Route = createFileRoute("/")({
@@ -50,8 +53,13 @@ type Outcome = "WIN" | "LOSS" | "UNKNOWN" | null;
 type TechnicalReading = {
   trend: string;
   ema: string;
+  ema50: string;
   momentum: string;
+  rsi: string;
   volatility: string;
+  bollinger: string;
+  atr: string;
+  adx: string;
   candlePattern: string;
   supportResistance: string;
   macd: string;
@@ -62,6 +70,9 @@ type TechnicalReading = {
   bias: "CALL" | "PUT" | "NEUTRAL";
   confluences: string[];
   warnings: string[];
+  checksPassed: string[];
+  checksPending: string[];
+  nextCondition: string;
   overlay: {
     supportY: number | null;
     resistanceY: number | null;
@@ -86,6 +97,7 @@ type SignalRow = {
 
 const LESSONS_KEY = "sv_lessons_v1";
 const STATS_KEY = "sv_stats_v1";
+const BACKTEST_KEY = "sv_backtest_v1";
 const MAX_LESSONS = 6;
 
 function loadLessons(): string[] {
@@ -134,6 +146,9 @@ function Index() {
   const audioContextRef = useRef<AudioContext | null>(null);
   const stableOverlayRef = useRef<TechnicalReading["overlay"] | null>(null);
   const overlayLockedUntilRef = useRef(0);
+  const zoomRef = useRef(1);
+  const focusXRef = useRef(50);
+  const focusYRef = useRef(50);
 
   const [sharing, setSharing] = useState(false);
   const [running, setRunning] = useState(false);
@@ -151,6 +166,9 @@ function Index() {
   const [lastAnalysisAt, setLastAnalysisAt] = useState<number | null>(null);
   const [nextAnalysisIn, setNextAnalysisIn] = useState(0);
   const [overlayLockedUntil, setOverlayLockedUntil] = useState(0);
+  const [zoom, setZoom] = useState(1);
+  const [focusX, setFocusX] = useState(50);
+  const [focusY, setFocusY] = useState(50);
 
   useEffect(() => {
     soundRef.current = sound;
@@ -161,6 +179,10 @@ function Index() {
     const s = loadStats();
     statsRef.current = s;
     setStats(s);
+    try {
+      const saved = JSON.parse(localStorage.getItem(BACKTEST_KEY) || "[]") as SignalRow[];
+      setHistory(saved);
+    } catch {}
   }, []);
 
   // Live countdown ticker for lock (independent of loop)
@@ -232,9 +254,11 @@ function Index() {
   const alertCall = useCallback(
     () =>
       playTone([
-        { freq: 660, dur: 0.12, delay: 0 },
-        { freq: 880, dur: 0.12, delay: 0.13 },
-        { freq: 1175, dur: 0.22, delay: 0.26 },
+        { freq: 660, dur: 0.14, delay: 0, gain: 0.38 },
+        { freq: 880, dur: 0.14, delay: 0.16, gain: 0.38 },
+        { freq: 1175, dur: 0.25, delay: 0.32, gain: 0.42 },
+        { freq: 880, dur: 0.14, delay: 0.72, gain: 0.38 },
+        { freq: 1175, dur: 0.3, delay: 0.88, gain: 0.42 },
       ]),
     [playTone],
   );
@@ -249,9 +273,11 @@ function Index() {
   const alertPut = useCallback(
     () =>
       playTone([
-        { freq: 660, dur: 0.12, delay: 0 },
-        { freq: 494, dur: 0.12, delay: 0.13 },
-        { freq: 330, dur: 0.22, delay: 0.26 },
+        { freq: 660, dur: 0.14, delay: 0, gain: 0.38 },
+        { freq: 494, dur: 0.14, delay: 0.16, gain: 0.38 },
+        { freq: 330, dur: 0.25, delay: 0.32, gain: 0.42 },
+        { freq: 494, dur: 0.14, delay: 0.72, gain: 0.38 },
+        { freq: 330, dur: 0.3, delay: 0.88, gain: 0.42 },
       ]),
     [playTone],
   );
@@ -322,13 +348,19 @@ function Index() {
     const video = videoRef.current;
     const canvas = canvasRef.current;
     if (!video || !canvas || !video.videoWidth) return null;
-    const targetW = Math.min(900, video.videoWidth);
-    const scale = targetW / video.videoWidth;
+    const sourceScale = zoomRef.current;
+    const sourceW = video.videoWidth / sourceScale;
+    const sourceH = video.videoHeight / sourceScale;
+    const maxX = video.videoWidth - sourceW;
+    const maxY = video.videoHeight - sourceH;
+    const sourceX = maxX * (focusXRef.current / 100);
+    const sourceY = maxY * (focusYRef.current / 100);
+    const targetW = Math.min(900, sourceW);
     canvas.width = targetW;
-    canvas.height = Math.round(video.videoHeight * scale);
+    canvas.height = Math.round(sourceH * (targetW / sourceW));
     const ctx = canvas.getContext("2d");
     if (!ctx) return null;
-    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    ctx.drawImage(video, sourceX, sourceY, sourceW, sourceH, 0, 0, canvas.width, canvas.height);
     return canvas.toDataURL("image/jpeg", 0.6);
   }, []);
 
@@ -348,8 +380,15 @@ function Index() {
       });
       // Atualiza histórico e sinal atual
       setHistory((h) =>
-        h.map((r) => (r.id === pending.id ? { ...r, outcome: res.outcome, lesson: res.lesson } : r)),
+        h.map((r) => {
+          const next = r.id === pending.id ? { ...r, outcome: res.outcome, lesson: res.lesson } : r;
+          return next;
+        }),
       );
+      setHistory((h) => {
+        try { localStorage.setItem(BACKTEST_KEY, JSON.stringify(h)); } catch {}
+        return h;
+      });
       setCurrent((c) =>
         c && c.id === pending.id ? { ...c, outcome: res.outcome, lesson: res.lesson } : c,
       );
@@ -443,6 +482,7 @@ function Index() {
           if (fresh && last.signal === rawSignal) {
             signal = rawSignal;
             lastCandidateRef.current = null;
+            confirmedReason = `${rawSignal === "CALL" ? "COMPRE AGORA" : "VENDA AGORA"} — ${res.reason.replace(/^(COMPRE|VENDA) AGORA\s*[—-]?\s*/i, "")}`;
           } else {
             lastCandidateRef.current = { signal: rawSignal, ts: Date.now(), remainingChecks: 3 };
             candidateSignal = rawSignal;
@@ -492,7 +532,11 @@ function Index() {
           expirationMinutes: expirationRef.current,
         };
         setCurrent(row);
-        setHistory((h) => [row, ...h].slice(0, 30));
+        setHistory((h) => {
+          const next = [row, ...h].slice(0, 100);
+          try { localStorage.setItem(BACKTEST_KEY, JSON.stringify(next)); } catch {}
+          return next;
+        });
 
         if (signal !== "WAIT") {
           if (signal === "CALL") alertCall();
@@ -552,6 +596,28 @@ function Index() {
     saveLessons([]);
     saveStats({ wins: 0, losses: 0 });
     setStats({ wins: 0, losses: 0 });
+  }, []);
+
+  const refreshStructure = useCallback(() => {
+    stableOverlayRef.current = null;
+    overlayLockedUntilRef.current = 0;
+    setOverlayLockedUntil(0);
+    setAnalysisStage("Estrutura liberada para nova leitura");
+  }, []);
+
+  const updateZoom = useCallback((value: number) => {
+    zoomRef.current = value;
+    setZoom(value);
+  }, []);
+
+  const updateFocusX = useCallback((value: number) => {
+    focusXRef.current = value;
+    setFocusX(value);
+  }, []);
+
+  const updateFocusY = useCallback((value: number) => {
+    focusYRef.current = value;
+    setFocusY(value);
   }, []);
 
   useEffect(() => () => stopSharing(), [stopSharing]);
@@ -620,7 +686,13 @@ function Index() {
       <main className="grid grid-cols-12 gap-4 p-4">
         <section className="col-span-12 lg:col-span-8 space-y-4">
           <div className="relative rounded-xl overflow-hidden bg-black border border-white/10 aspect-video">
-            <video ref={videoRef} className="w-full h-full object-contain" muted playsInline />
+            <video
+              ref={videoRef}
+              className="h-full w-full object-contain transition-transform duration-200"
+              style={{ transform: `scale(${zoom})`, transformOrigin: `${focusX}% ${focusY}%` }}
+              muted
+              playsInline
+            />
             {sharing && current?.analysis && (
               <ChartOverlay
                 reading={current.analysis}
@@ -709,6 +781,25 @@ function Index() {
             </div>
           )}
 
+          {sharing && (
+            <div className="grid gap-3 border border-white/10 bg-white/[0.03] p-3 sm:grid-cols-[auto_1fr_1fr_auto] sm:items-center">
+              <div className="flex items-center gap-2 text-xs font-semibold text-white/60">
+                <Search className="h-4 w-4 text-cyan-300" /> Foco {zoom.toFixed(1)}×
+              </div>
+              <label className="text-[10px] font-semibold uppercase text-white/40">
+                Zoom
+                <input aria-label="Zoom do gráfico" className="mt-1 block w-full accent-cyan-400" type="range" min="1" max="2.5" step="0.1" value={zoom} onChange={(event) => updateZoom(Number(event.target.value))} />
+              </label>
+              <div className="grid grid-cols-2 gap-2">
+                <label className="text-[10px] font-semibold uppercase text-white/40">Horizontal<input aria-label="Foco horizontal" className="mt-1 block w-full accent-cyan-400" type="range" min="0" max="100" value={focusX} disabled={zoom === 1} onChange={(event) => updateFocusX(Number(event.target.value))} /></label>
+                <label className="text-[10px] font-semibold uppercase text-white/40">Vertical<input aria-label="Foco vertical" className="mt-1 block w-full accent-cyan-400" type="range" min="0" max="100" value={focusY} disabled={zoom === 1} onChange={(event) => updateFocusY(Number(event.target.value))} /></label>
+              </div>
+              <Button type="button" variant="outline" size="sm" onClick={refreshStructure} className="border-white/10 bg-white/5 text-white hover:bg-white/10">
+                <RotateCcw className="mr-2 h-4 w-4" /> Recalcular linhas
+              </Button>
+            </div>
+          )}
+
           <div className="flex gap-2 flex-wrap">
             {sharing && (
               <>
@@ -758,6 +849,10 @@ function Index() {
           )}
 
           <TechnicalPanel reading={current?.analysis} candidate={current?.candidateSignal} />
+          <BacktestPanel history={history} onClear={() => {
+            setHistory([]);
+            try { localStorage.removeItem(BACKTEST_KEY); } catch {}
+          }} />
         </section>
 
         <aside className="col-span-12 lg:col-span-4 space-y-4">
@@ -819,11 +914,18 @@ function CurrentSignal({
     : isPut
       ? "shadow-[0_0_40px_rgba(248,113,113,0.35)]"
       : "";
+  const command = row.candidateSignal
+    ? `${displaySignal === "CALL" ? "Possível compra" : "Possível venda"} — aguarde`
+    : displaySignal === "CALL"
+      ? "COMPRE AGORA"
+      : displaySignal === "PUT"
+        ? "VENDA AGORA"
+        : "SEM ENTRADA";
 
   return (
     <div
       key={row.id}
-      className={`relative rounded-xl bg-gradient-to-br ${bg} border p-5 ${glow} ${active ? "animate-signal-pop" : ""}`}
+      className={`relative rounded-xl bg-gradient-to-br ${bg} border p-5 ${row.candidateSignal ? "border-dashed opacity-80" : glow} ${active ? "animate-signal-pop" : ""}`}
     >
       {active && (
         <div
@@ -848,6 +950,7 @@ function CurrentSignal({
             </div>
           )}
           <div className={`text-4xl font-black ${color} leading-none`}>{displaySignal}</div>
+          <div className={`mt-2 text-sm font-black ${row.candidateSignal ? "text-amber-300" : color}`}>{command}</div>
           <div className="text-sm text-white/60 mt-1">{row.confidence}% de confiança</div>
         </div>
       </div>
@@ -943,12 +1046,12 @@ function ChartOverlay({
           <div className={`relative flex flex-col items-center ${signalColor}`}>
             <span className={`absolute h-16 w-16 rounded-full border-2 ${isCall ? "border-emerald-300/70" : "border-red-300/70"} animate-ping-slow`} />
             {isCall ? (
-              <TrendingUp className="h-12 w-12 animate-bounce-short drop-shadow-lg" strokeWidth={3} />
+              <TrendingUp className={`h-14 w-14 drop-shadow-lg ${candidate ? "opacity-60" : "animate-bounce-short fill-current"}`} strokeWidth={3} />
             ) : (
-              <TrendingDown className="h-12 w-12 animate-bounce-short drop-shadow-lg" strokeWidth={3} />
+              <TrendingDown className={`h-14 w-14 drop-shadow-lg ${candidate ? "opacity-60" : "animate-bounce-short fill-current"}`} strokeWidth={3} />
             )}
             <span className={`mt-1 border px-2 py-1 text-xs font-black ${isCall ? "border-emerald-300 bg-emerald-500/90 text-black" : "border-red-300 bg-red-500/90 text-white"}`}>
-              {candidate ? `${signal} · OBSERVAR` : `${signal} · ENTRADA AGORA`}
+              {candidate ? `${signal} · OBSERVAR` : signal === "CALL" ? "COMPRE AGORA" : "VENDA AGORA"}
             </span>
           </div>
         </div>
@@ -971,10 +1074,15 @@ function TechnicalPanel({
     ? [
         { label: "Tendência", value: reading.trend, Icon: Activity },
         { label: "EMA 9 / 21", value: reading.ema, Icon: Waves },
+        { label: "EMA 50", value: reading.ema50, Icon: Waves },
         { label: "Momentum", value: reading.momentum, Icon: Gauge },
+        { label: "RSI 14", value: reading.rsi, Icon: Gauge },
         { label: "Velas", value: reading.candlePattern, Icon: CandlestickChart },
         { label: "Suporte / resistência", value: reading.supportResistance, Icon: Target },
         { label: "Volatilidade", value: reading.volatility, Icon: Activity },
+        { label: "Bollinger", value: reading.bollinger, Icon: Waves },
+        { label: "ATR", value: reading.atr, Icon: Activity },
+        { label: "ADX", value: reading.adx, Icon: Gauge },
         { label: "MACD", value: reading.macd, Icon: Waves },
         { label: "Estocástico", value: reading.stochastic, Icon: Gauge },
         { label: "Fibonacci", value: reading.fibonacci, Icon: Target },
@@ -1033,9 +1141,68 @@ function TechnicalPanel({
               </ul>
             </div>
           </div>
+          <div className="mt-3 grid gap-3 sm:grid-cols-2">
+            <div className="border border-cyan-400/20 bg-cyan-400/[0.06] p-3">
+              <div className="text-[10px] font-semibold uppercase text-cyan-300">Checklist aprovado</div>
+              <ul className="mt-2 space-y-1 text-xs text-white/70">
+                {reading.checksPassed.length ? reading.checksPassed.map((item) => <li key={item}>✓ {item}</li>) : <li>Nenhum critério aprovado</li>}
+              </ul>
+            </div>
+            <div className="border border-amber-400/20 bg-amber-400/[0.06] p-3">
+              <div className="text-[10px] font-semibold uppercase text-amber-300">Falta para entrar</div>
+              <p className="mt-2 text-sm font-semibold text-white/85">{reading.nextCondition}</p>
+              {reading.checksPending.length > 0 && <ul className="mt-2 space-y-1 text-xs text-white/60">{reading.checksPending.map((item) => <li key={item}>• {item}</li>)}</ul>}
+            </div>
+          </div>
         </>
       )}
     </div>
+  );
+}
+
+function BacktestPanel({ history, onClear }: { history: SignalRow[]; onClear: () => void }) {
+  const trades = history.filter((row) => row.signal !== "WAIT");
+  const wins = trades.filter((row) => row.outcome === "WIN").length;
+  const losses = trades.filter((row) => row.outcome === "LOSS").length;
+  const unknown = trades.filter((row) => row.outcome === "UNKNOWN" || !row.outcome).length;
+  const decided = wins + losses;
+  const rate = decided ? Math.round((wins / decided) * 100) : 0;
+  const callCount = trades.filter((row) => row.signal === "CALL").length;
+  const putCount = trades.filter((row) => row.signal === "PUT").length;
+
+  const exportCsv = () => {
+    const rows = [
+      ["horario", "sinal", "confianca", "expiracao_min", "resultado", "motivo"],
+      ...trades.map((row) => [new Date(row.ts).toISOString(), row.signal, row.confidence, row.expirationMinutes, row.outcome ?? "PENDENTE", row.reason]),
+    ];
+    const csv = rows.map((row) => row.map((cell) => `"${String(cell).replaceAll('"', '""')}"`).join(",")).join("\n");
+    const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = "signal-vision-backtest.csv";
+    anchor.click();
+    URL.revokeObjectURL(url);
+  };
+
+  return (
+    <section className="border border-white/10 bg-white/[0.03] p-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h2 className="text-sm font-bold">Backtesting da sessão</h2>
+          <p className="mt-0.5 text-xs text-white/45">Mede apenas sinais confirmados nesta tela; não é histórico OHLC.</p>
+        </div>
+        <div className="flex gap-2">
+          <Button type="button" size="sm" variant="outline" disabled={!trades.length} onClick={exportCsv} className="border-white/10 bg-white/5 text-white hover:bg-white/10"><Download className="mr-2 h-4 w-4" /> CSV</Button>
+          <Button type="button" size="sm" variant="outline" disabled={!history.length} onClick={onClear} className="border-white/10 bg-white/5 text-white hover:bg-white/10">Limpar teste</Button>
+        </div>
+      </div>
+      <div className="mt-4 grid grid-cols-3 gap-px border border-white/10 bg-white/10 sm:grid-cols-6">
+        {[['Operações', trades.length], ['WIN', wins], ['LOSS', losses], ['Taxa', `${rate}%`], ['CALL', callCount], ['PUT', putCount]].map(([label, value]) => (
+          <div key={label} className="bg-[#0d121d] p-3 text-center"><div className="text-[10px] font-semibold uppercase text-white/40">{label}</div><div className="mt-1 text-lg font-black">{value}</div></div>
+        ))}
+      </div>
+      {unknown > 0 && <p className="mt-2 text-xs text-amber-300">{unknown} operação(ões) pendente(s) ou indefinida(s).</p>}
+    </section>
   );
 }
 
