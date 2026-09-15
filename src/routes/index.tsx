@@ -54,6 +54,10 @@ type TechnicalReading = {
   volatility: string;
   candlePattern: string;
   supportResistance: string;
+  macd: string;
+  stochastic: string;
+  fibonacci: string;
+  volume: string;
   score: number;
   bias: "CALL" | "PUT" | "NEUTRAL";
   confluences: string[];
@@ -128,6 +132,8 @@ function Index() {
     remainingChecks: number;
   } | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
+  const stableOverlayRef = useRef<TechnicalReading["overlay"] | null>(null);
+  const overlayLockedUntilRef = useRef(0);
 
   const [sharing, setSharing] = useState(false);
   const [running, setRunning] = useState(false);
@@ -144,6 +150,7 @@ function Index() {
   const [analysisStage, setAnalysisStage] = useState("Parado");
   const [lastAnalysisAt, setLastAnalysisAt] = useState<number | null>(null);
   const [nextAnalysisIn, setNextAnalysisIn] = useState(0);
+  const [overlayLockedUntil, setOverlayLockedUntil] = useState(0);
 
   useEffect(() => {
     soundRef.current = sound;
@@ -232,7 +239,11 @@ function Index() {
     [playTone],
   );
   const alertCandidate = useCallback(
-    () => playTone([{ freq: 620, dur: 0.1, delay: 0, type: "triangle", gain: 0.12 }]),
+    () =>
+      playTone([
+        { freq: 620, dur: 0.14, delay: 0, type: "triangle", gain: 0.28 },
+        { freq: 760, dur: 0.18, delay: 0.17, type: "triangle", gain: 0.28 },
+      ]),
     [playTone],
   );
   const alertPut = useCallback(
@@ -301,10 +312,11 @@ function Index() {
         await videoRef.current.play();
       }
       setSharing(true);
+      unlockSound();
     } catch (e: any) {
       setError(e?.message ?? "Falha ao compartilhar tela");
     }
-  }, [stopSharing]);
+  }, [stopSharing, unlockSound]);
 
   const captureFrame = useCallback((): string | null => {
     const video = videoRef.current;
@@ -448,6 +460,20 @@ function Index() {
           }
         }
 
+        const receivedOverlay = res.analysis.overlay;
+        const hasStructuralOverlay =
+          receivedOverlay.supportY !== null ||
+          receivedOverlay.resistanceY !== null ||
+          (receivedOverlay.trendStart !== null && receivedOverlay.trendEnd !== null);
+        if ((!stableOverlayRef.current || Date.now() >= overlayLockedUntilRef.current) && hasStructuralOverlay) {
+          stableOverlayRef.current = { ...receivedOverlay, entry: null };
+          overlayLockedUntilRef.current = Date.now() + Math.max(60000, expirationRef.current * 60000);
+          setOverlayLockedUntil(overlayLockedUntilRef.current);
+        }
+        const stableOverlay = stableOverlayRef.current
+          ? { ...stableOverlayRef.current, entry: receivedOverlay.entry }
+          : receivedOverlay;
+
         const row: SignalRow = {
           id: crypto.randomUUID(),
           ts: Date.now(),
@@ -462,7 +488,7 @@ function Index() {
           latencyMs: res.latencyMs,
           outcome: null,
           candidateSignal,
-          analysis: res.analysis,
+          analysis: { ...res.analysis, overlay: stableOverlay },
           expirationMinutes: expirationRef.current,
         };
         setCurrent(row);
@@ -513,6 +539,9 @@ function Index() {
     setRunning(true);
     setAnalysisStage("Preparando primeira captura");
     lockUntilRef.current = 0;
+    stableOverlayRef.current = null;
+    overlayLockedUntilRef.current = 0;
+    setOverlayLockedUntil(0);
     setLockRemaining(0);
     void loop();
   }, [running, sharing, loop, unlockSound]);
@@ -593,7 +622,12 @@ function Index() {
           <div className="relative rounded-xl overflow-hidden bg-black border border-white/10 aspect-video">
             <video ref={videoRef} className="w-full h-full object-contain" muted playsInline />
             {sharing && current?.analysis && (
-              <ChartOverlay reading={current.analysis} signal={current.candidateSignal ?? current.signal} />
+              <ChartOverlay
+                reading={current.analysis}
+                signal={current.candidateSignal ?? current.signal}
+                candidate={Boolean(current.candidateSignal)}
+                lockedUntil={overlayLockedUntil}
+              />
             )}
             {!sharing && (
               <div className="absolute inset-0 flex flex-col items-center justify-center gap-4 bg-gradient-to-br from-slate-900 to-black">
@@ -854,9 +888,13 @@ function CurrentSignal({
 function ChartOverlay({
   reading,
   signal,
+  candidate,
+  lockedUntil,
 }: {
   reading: TechnicalReading;
   signal: SignalKind;
+  candidate: boolean;
+  lockedUntil: number;
 }) {
   const { overlay } = reading;
   const activeSignal = signal === "CALL" || signal === "PUT";
@@ -910,13 +948,13 @@ function ChartOverlay({
               <TrendingDown className="h-12 w-12 animate-bounce-short drop-shadow-lg" strokeWidth={3} />
             )}
             <span className={`mt-1 border px-2 py-1 text-xs font-black ${isCall ? "border-emerald-300 bg-emerald-500/90 text-black" : "border-red-300 bg-red-500/90 text-white"}`}>
-              {signal} · ENTRADA
+              {candidate ? `${signal} · OBSERVAR` : `${signal} · ENTRADA AGORA`}
             </span>
           </div>
         </div>
       )}
       <div className="absolute bottom-3 left-3 flex items-center gap-2 border border-cyan-300/30 bg-black/75 px-2.5 py-1.5 text-[10px] font-semibold uppercase text-cyan-200 backdrop-blur-sm">
-        <Crosshair className="h-3.5 w-3.5" /> Linhas calculadas pela leitura atual
+        <Crosshair className="h-3.5 w-3.5" /> Zonas fixas até {new Date(lockedUntil).toLocaleTimeString("pt-BR", { hour12: false })}
       </div>
     </div>
   );
@@ -937,6 +975,10 @@ function TechnicalPanel({
         { label: "Velas", value: reading.candlePattern, Icon: CandlestickChart },
         { label: "Suporte / resistência", value: reading.supportResistance, Icon: Target },
         { label: "Volatilidade", value: reading.volatility, Icon: Activity },
+        { label: "MACD", value: reading.macd, Icon: Waves },
+        { label: "Estocástico", value: reading.stochastic, Icon: Gauge },
+        { label: "Fibonacci", value: reading.fibonacci, Icon: Target },
+        { label: "Volume", value: reading.volume, Icon: Activity },
       ]
     : [];
 
@@ -955,7 +997,7 @@ function TechnicalPanel({
               </span>
             )}
             <span className="rounded border border-white/10 bg-black/30 px-2 py-1 text-xs font-bold">
-              Score {reading.score}/7
+              Score {reading.score}/10
             </span>
           </div>
         )}
