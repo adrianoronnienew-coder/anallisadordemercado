@@ -15,6 +15,12 @@ import {
   Check,
   X,
   HelpCircle,
+  Activity,
+  CandlestickChart,
+  Gauge,
+  Waves,
+  Target,
+  TriangleAlert,
 } from "lucide-react";
 
 export const Route = createFileRoute("/")({
@@ -26,12 +32,31 @@ export const Route = createFileRoute("/")({
         name: "description",
         content: "Análise de gráficos em tempo real por IA através de compartilhamento de tela.",
       },
+      { property: "og:title", content: "Signal Vision — Análise de tela em tempo real" },
+      {
+        property: "og:description",
+        content: "Leitura técnica visual e sinais CALL/PUT a partir do gráfico compartilhado.",
+      },
+      { property: "og:type", content: "website" },
+      { name: "twitter:card", content: "summary_large_image" },
     ],
   }),
 });
 
 type SignalKind = "CALL" | "PUT" | "WAIT";
 type Outcome = "WIN" | "LOSS" | "UNKNOWN" | null;
+type TechnicalReading = {
+  trend: string;
+  ema: string;
+  momentum: string;
+  volatility: string;
+  candlePattern: string;
+  supportResistance: string;
+  score: number;
+  bias: "CALL" | "PUT" | "NEUTRAL";
+  confluences: string[];
+  warnings: string[];
+};
 type SignalRow = {
   id: string;
   ts: number;
@@ -41,6 +66,8 @@ type SignalRow = {
   latencyMs: number;
   outcome?: Outcome;
   lesson?: string;
+  candidateSignal?: "CALL" | "PUT";
+  analysis?: TechnicalReading;
 };
 
 const LESSONS_KEY = "sv_lessons_v1";
@@ -85,7 +112,12 @@ function Index() {
   const statsRef = useRef<{ wins: number; losses: number }>({ wins: 0, losses: 0 });
   const pendingTradeRef = useRef<SignalRow | null>(null);
   const evaluateAtRef = useRef<number>(0);
-  const lastCandidateRef = useRef<{ signal: "CALL" | "PUT"; ts: number } | null>(null);
+  const lastCandidateRef = useRef<{
+    signal: "CALL" | "PUT";
+    ts: number;
+    remainingChecks: number;
+  } | null>(null);
+  const audioContextRef = useRef<AudioContext | null>(null);
 
   const [sharing, setSharing] = useState(false);
   const [running, setRunning] = useState(false);
@@ -96,6 +128,7 @@ function Index() {
   const [analyzing, setAnalyzing] = useState(false);
   const [lockRemaining, setLockRemaining] = useState(0);
   const [stats, setStats] = useState<{ wins: number; losses: number }>({ wins: 0, losses: 0 });
+  const [soundReady, setSoundReady] = useState(false);
 
   useEffect(() => {
     soundRef.current = sound;
@@ -118,12 +151,39 @@ function Index() {
   }, []);
 
   // ==== Efeitos sonoros ====
+  const unlockSound = useCallback(() => {
+    if (!soundRef.current) return false;
+    try {
+      const AudioContextCtor = window.AudioContext ??
+        (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+      if (!AudioContextCtor) return false;
+      const ctx = audioContextRef.current ?? new AudioContextCtor();
+      audioContextRef.current = ctx;
+      if (ctx.state === "suspended") void ctx.resume();
+
+      // A fonte silenciosa, criada dentro do clique, desbloqueia áudio no Chrome/Safari.
+      const source = ctx.createBufferSource();
+      source.buffer = ctx.createBuffer(1, 1, 22050);
+      source.connect(ctx.destination);
+      source.start(0);
+      setSoundReady(true);
+      return true;
+    } catch {
+      setSoundReady(false);
+      return false;
+    }
+  }, []);
+
   const playTone = useCallback(
     (steps: { freq: number; dur: number; delay: number; type?: OscillatorType; gain?: number }[]) => {
       if (!soundRef.current) return;
       try {
-        const AC = window.AudioContext || (window as any).webkitAudioContext;
-        const ctx = new AC();
+        const ctx = audioContextRef.current;
+        if (!ctx) {
+          setSoundReady(false);
+          return;
+        }
+        if (ctx.state === "suspended") void ctx.resume();
         const now = ctx.currentTime;
         steps.forEach((s) => {
           const osc = ctx.createOscillator();
@@ -139,7 +199,9 @@ function Index() {
           osc.start(now + s.delay);
           osc.stop(now + s.delay + s.dur + 0.02);
         });
-      } catch {}
+      } catch {
+        setSoundReady(false);
+      }
     },
     [],
   );
@@ -179,6 +241,19 @@ function Index() {
       ]),
     [playTone],
   );
+
+  const testSound = useCallback(() => {
+    const ready = unlockSound();
+    if (!ready) {
+      setError("O navegador bloqueou o áudio. Toque novamente em Testar som.");
+      return;
+    }
+    setError(null);
+    playTone([
+      { freq: 740, dur: 0.12, delay: 0, type: "triangle", gain: 0.3 },
+      { freq: 988, dur: 0.2, delay: 0.14, type: "triangle", gain: 0.3 },
+    ]);
+  }, [playTone, unlockSound]);
 
   const stopSharing = useCallback(() => {
     runningRef.current = false;
@@ -271,7 +346,8 @@ function Index() {
   const loop = useCallback(async () => {
     const MIN_INTERVAL_MS = 2500;
     const CYCLE_LOCK_MS = 60000;
-    const MIN_CONFIDENCE = 72;
+    const MIN_CONFIDENCE = 70;
+    const CANDIDATE_TTL_MS = 45000;
     let backoffMs = 0;
 
     while (runningRef.current) {
@@ -319,22 +395,30 @@ function Index() {
         const rawSignal: SignalKind =
           res.signal !== "WAIT" && res.confidence < MIN_CONFIDENCE ? "WAIT" : res.signal;
 
-        // Confirmação em 2 frames: só dispara se o mesmo lado for detectado
-        // duas análises seguidas dentro de 10s.
+        // Confirmação em duas leituras compatível com a latência real da IA.
         let signal: SignalKind = "WAIT";
         let confirmedReason = res.reason;
+        let candidateSignal: "CALL" | "PUT" | undefined;
         if (rawSignal === "CALL" || rawSignal === "PUT") {
           const last = lastCandidateRef.current;
-          const fresh = last && Date.now() - last.ts < 10000;
-          if (fresh && last!.signal === rawSignal) {
+          const fresh = last && Date.now() - last.ts < CANDIDATE_TTL_MS;
+          if (fresh && last.signal === rawSignal) {
             signal = rawSignal;
             lastCandidateRef.current = null;
           } else {
-            lastCandidateRef.current = { signal: rawSignal, ts: Date.now() };
+            lastCandidateRef.current = { signal: rawSignal, ts: Date.now(), remainingChecks: 3 };
+            candidateSignal = rawSignal;
             confirmedReason = `Candidato ${rawSignal} (${res.confidence}%) — aguardando confirmação`;
           }
         } else {
-          lastCandidateRef.current = null;
+          const last = lastCandidateRef.current;
+          if (last && Date.now() - last.ts < CANDIDATE_TTL_MS && last.remainingChecks > 1) {
+            lastCandidateRef.current = { ...last, remainingChecks: last.remainingChecks - 1 };
+            candidateSignal = last.signal;
+            confirmedReason = `Candidato ${last.signal} mantido — aguardando nova confirmação`;
+          } else {
+            lastCandidateRef.current = null;
+          }
         }
 
         const row: SignalRow = {
@@ -350,6 +434,8 @@ function Index() {
                 : res.reason,
           latencyMs: res.latencyMs,
           outcome: null,
+          candidateSignal,
+          analysis: res.analysis,
         };
         setCurrent(row);
         setHistory((h) => [row, ...h].slice(0, 30));
@@ -390,12 +476,13 @@ function Index() {
       return;
     }
     if (!sharing) return;
+    if (soundRef.current) unlockSound();
     runningRef.current = true;
     setRunning(true);
     lockUntilRef.current = 0;
     setLockRemaining(0);
     void loop();
-  }, [running, sharing, loop]);
+  }, [running, sharing, loop, unlockSound]);
 
   const resetLearning = useCallback(() => {
     lessonsRef.current = [];
@@ -442,11 +529,29 @@ function Index() {
           <Button
             variant="ghost"
             size="sm"
-            onClick={() => setSound((s) => !s)}
+            onClick={() => {
+              setSound((s) => {
+                soundRef.current = !s;
+                if (s) setSoundReady(false);
+                return !s;
+              });
+            }}
             className="text-white/70 hover:text-white hover:bg-white/5"
+            aria-label={sound ? "Desativar som" : "Ativar som"}
           >
             {sound ? <Volume2 className="h-4 w-4" /> : <VolumeX className="h-4 w-4" />}
           </Button>
+          {sound && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={testSound}
+              className="border-white/10 bg-white/5 text-white hover:bg-white/10"
+            >
+              <Volume2 className="mr-2 h-4 w-4" />
+              {soundReady ? "Som pronto" : "Testar som"}
+            </Button>
+          )}
         </div>
       </header>
 
@@ -544,6 +649,8 @@ function Index() {
               {error}
             </div>
           )}
+
+          <TechnicalPanel reading={current?.analysis} candidate={current?.candidateSignal} />
         </section>
 
         <aside className="col-span-12 lg:col-span-4 space-y-4">
@@ -589,8 +696,9 @@ function CurrentSignal({
       </div>
     );
   }
-  const isCall = row.signal === "CALL";
-  const isPut = row.signal === "PUT";
+  const displaySignal = row.candidateSignal ?? row.signal;
+  const isCall = displaySignal === "CALL";
+  const isPut = displaySignal === "PUT";
   const active = isCall || isPut;
   const bg = isCall
     ? "from-emerald-500/20 to-emerald-500/5 border-emerald-500/40"
@@ -627,7 +735,12 @@ function CurrentSignal({
           strokeWidth={2.5}
         />
         <div>
-          <div className={`text-4xl font-black ${color} leading-none`}>{row.signal}</div>
+          {row.candidateSignal && (
+            <div className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-amber-300">
+              Em observação
+            </div>
+          )}
+          <div className={`text-4xl font-black ${color} leading-none`}>{displaySignal}</div>
           <div className="text-sm text-white/60 mt-1">{row.confidence}% de confiança</div>
         </div>
       </div>
@@ -660,6 +773,81 @@ function CurrentSignal({
       )}
       {row.outcome && row.outcome !== null && (
         <OutcomeBadge outcome={row.outcome} lesson={row.lesson} />
+      )}
+    </div>
+  );
+}
+
+function TechnicalPanel({
+  reading,
+  candidate,
+}: {
+  reading?: TechnicalReading;
+  candidate?: "CALL" | "PUT";
+}) {
+  const items = reading
+    ? [
+        { label: "Tendência", value: reading.trend, Icon: Activity },
+        { label: "EMA 9 / 21", value: reading.ema, Icon: Waves },
+        { label: "Momentum", value: reading.momentum, Icon: Gauge },
+        { label: "Velas", value: reading.candlePattern, Icon: CandlestickChart },
+        { label: "Suporte / resistência", value: reading.supportResistance, Icon: Target },
+        { label: "Volatilidade", value: reading.volatility, Icon: Activity },
+      ]
+    : [];
+
+  return (
+    <div className="rounded-lg border border-white/10 bg-white/[0.03] p-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h2 className="text-sm font-bold">Leitura técnica das velas</h2>
+          <p className="mt-0.5 text-xs text-white/45">Atualizada a cada imagem analisada</p>
+        </div>
+        {reading && (
+          <div className="flex items-center gap-2">
+            {candidate && (
+              <span className="rounded border border-amber-400/30 bg-amber-400/10 px-2 py-1 text-xs font-semibold text-amber-300">
+                Observando {candidate}
+              </span>
+            )}
+            <span className="rounded border border-white/10 bg-black/30 px-2 py-1 text-xs font-bold">
+              Score {reading.score}/7
+            </span>
+          </div>
+        )}
+      </div>
+
+      {!reading ? (
+        <p className="mt-4 text-sm text-white/40">A leitura aparecerá após a primeira análise.</p>
+      ) : (
+        <>
+          <div className="mt-4 grid gap-px overflow-hidden rounded border border-white/10 bg-white/10 sm:grid-cols-2 lg:grid-cols-3">
+            {items.map(({ label, value, Icon }) => (
+              <div key={label} className="min-h-24 bg-[#0d121d] p-3">
+                <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-wider text-white/40">
+                  <Icon className="h-3.5 w-3.5 text-cyan-400" /> {label}
+                </div>
+                <p className="mt-2 text-sm leading-snug text-white/75">{value}</p>
+              </div>
+            ))}
+          </div>
+          <div className="mt-3 grid gap-3 sm:grid-cols-2">
+            <div className="rounded border border-emerald-400/20 bg-emerald-400/[0.06] p-3">
+              <div className="text-[10px] font-semibold uppercase tracking-wider text-emerald-300">Confluências</div>
+              <ul className="mt-2 space-y-1 text-xs text-white/70">
+                {reading.confluences.length ? reading.confluences.map((item) => <li key={item}>+ {item}</li>) : <li>Nenhuma confirmação forte</li>}
+              </ul>
+            </div>
+            <div className="rounded border border-amber-400/20 bg-amber-400/[0.06] p-3">
+              <div className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-amber-300">
+                <TriangleAlert className="h-3.5 w-3.5" /> Alertas técnicos
+              </div>
+              <ul className="mt-2 space-y-1 text-xs text-white/70">
+                {reading.warnings.length ? reading.warnings.map((item) => <li key={item}>• {item}</li>) : <li>Nenhum contra-sinal forte</li>}
+              </ul>
+            </div>
+          </div>
+        </>
       )}
     </div>
   );
