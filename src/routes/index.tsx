@@ -254,9 +254,11 @@ function Index() {
   const alertCall = useCallback(
     () =>
       playTone([
-        { freq: 660, dur: 0.12, delay: 0 },
-        { freq: 880, dur: 0.12, delay: 0.13 },
-        { freq: 1175, dur: 0.22, delay: 0.26 },
+        { freq: 660, dur: 0.14, delay: 0, gain: 0.38 },
+        { freq: 880, dur: 0.14, delay: 0.16, gain: 0.38 },
+        { freq: 1175, dur: 0.25, delay: 0.32, gain: 0.42 },
+        { freq: 880, dur: 0.14, delay: 0.72, gain: 0.38 },
+        { freq: 1175, dur: 0.3, delay: 0.88, gain: 0.42 },
       ]),
     [playTone],
   );
@@ -271,9 +273,11 @@ function Index() {
   const alertPut = useCallback(
     () =>
       playTone([
-        { freq: 660, dur: 0.12, delay: 0 },
-        { freq: 494, dur: 0.12, delay: 0.13 },
-        { freq: 330, dur: 0.22, delay: 0.26 },
+        { freq: 660, dur: 0.14, delay: 0, gain: 0.38 },
+        { freq: 494, dur: 0.14, delay: 0.16, gain: 0.38 },
+        { freq: 330, dur: 0.25, delay: 0.32, gain: 0.42 },
+        { freq: 494, dur: 0.14, delay: 0.72, gain: 0.38 },
+        { freq: 330, dur: 0.3, delay: 0.88, gain: 0.42 },
       ]),
     [playTone],
   );
@@ -352,7 +356,6 @@ function Index() {
     const sourceX = maxX * (focusXRef.current / 100);
     const sourceY = maxY * (focusYRef.current / 100);
     const targetW = Math.min(900, sourceW);
-    const scale = targetW / video.videoWidth;
     canvas.width = targetW;
     canvas.height = Math.round(sourceH * (targetW / sourceW));
     const ctx = canvas.getContext("2d");
@@ -529,7 +532,11 @@ function Index() {
           expirationMinutes: expirationRef.current,
         };
         setCurrent(row);
-        setHistory((h) => [row, ...h].slice(0, 30));
+        setHistory((h) => {
+          const next = [row, ...h].slice(0, 100);
+          try { localStorage.setItem(BACKTEST_KEY, JSON.stringify(next)); } catch {}
+          return next;
+        });
 
         if (signal !== "WAIT") {
           if (signal === "CALL") alertCall();
@@ -907,11 +914,18 @@ function CurrentSignal({
     : isPut
       ? "shadow-[0_0_40px_rgba(248,113,113,0.35)]"
       : "";
+  const command = row.candidateSignal
+    ? `${displaySignal === "CALL" ? "Possível compra" : "Possível venda"} — aguarde`
+    : displaySignal === "CALL"
+      ? "COMPRE AGORA"
+      : displaySignal === "PUT"
+        ? "VENDA AGORA"
+        : "SEM ENTRADA";
 
   return (
     <div
       key={row.id}
-      className={`relative rounded-xl bg-gradient-to-br ${bg} border p-5 ${glow} ${active ? "animate-signal-pop" : ""}`}
+      className={`relative rounded-xl bg-gradient-to-br ${bg} border p-5 ${row.candidateSignal ? "border-dashed opacity-80" : glow} ${active ? "animate-signal-pop" : ""}`}
     >
       {active && (
         <div
@@ -936,6 +950,7 @@ function CurrentSignal({
             </div>
           )}
           <div className={`text-4xl font-black ${color} leading-none`}>{displaySignal}</div>
+          <div className={`mt-2 text-sm font-black ${row.candidateSignal ? "text-amber-300" : color}`}>{command}</div>
           <div className="text-sm text-white/60 mt-1">{row.confidence}% de confiança</div>
         </div>
       </div>
@@ -1031,12 +1046,12 @@ function ChartOverlay({
           <div className={`relative flex flex-col items-center ${signalColor}`}>
             <span className={`absolute h-16 w-16 rounded-full border-2 ${isCall ? "border-emerald-300/70" : "border-red-300/70"} animate-ping-slow`} />
             {isCall ? (
-              <TrendingUp className="h-12 w-12 animate-bounce-short drop-shadow-lg" strokeWidth={3} />
+              <TrendingUp className={`h-14 w-14 drop-shadow-lg ${candidate ? "opacity-60" : "animate-bounce-short fill-current"}`} strokeWidth={3} />
             ) : (
-              <TrendingDown className="h-12 w-12 animate-bounce-short drop-shadow-lg" strokeWidth={3} />
+              <TrendingDown className={`h-14 w-14 drop-shadow-lg ${candidate ? "opacity-60" : "animate-bounce-short fill-current"}`} strokeWidth={3} />
             )}
             <span className={`mt-1 border px-2 py-1 text-xs font-black ${isCall ? "border-emerald-300 bg-emerald-500/90 text-black" : "border-red-300 bg-red-500/90 text-white"}`}>
-              {candidate ? `${signal} · OBSERVAR` : `${signal} · ENTRADA AGORA`}
+              {candidate ? `${signal} · OBSERVAR` : signal === "CALL" ? "COMPRE AGORA" : "VENDA AGORA"}
             </span>
           </div>
         </div>
@@ -1059,10 +1074,15 @@ function TechnicalPanel({
     ? [
         { label: "Tendência", value: reading.trend, Icon: Activity },
         { label: "EMA 9 / 21", value: reading.ema, Icon: Waves },
+        { label: "EMA 50", value: reading.ema50, Icon: Waves },
         { label: "Momentum", value: reading.momentum, Icon: Gauge },
+        { label: "RSI 14", value: reading.rsi, Icon: Gauge },
         { label: "Velas", value: reading.candlePattern, Icon: CandlestickChart },
         { label: "Suporte / resistência", value: reading.supportResistance, Icon: Target },
         { label: "Volatilidade", value: reading.volatility, Icon: Activity },
+        { label: "Bollinger", value: reading.bollinger, Icon: Waves },
+        { label: "ATR", value: reading.atr, Icon: Activity },
+        { label: "ADX", value: reading.adx, Icon: Gauge },
         { label: "MACD", value: reading.macd, Icon: Waves },
         { label: "Estocástico", value: reading.stochastic, Icon: Gauge },
         { label: "Fibonacci", value: reading.fibonacci, Icon: Target },
@@ -1121,9 +1141,68 @@ function TechnicalPanel({
               </ul>
             </div>
           </div>
+          <div className="mt-3 grid gap-3 sm:grid-cols-2">
+            <div className="border border-cyan-400/20 bg-cyan-400/[0.06] p-3">
+              <div className="text-[10px] font-semibold uppercase text-cyan-300">Checklist aprovado</div>
+              <ul className="mt-2 space-y-1 text-xs text-white/70">
+                {reading.checksPassed.length ? reading.checksPassed.map((item) => <li key={item}>✓ {item}</li>) : <li>Nenhum critério aprovado</li>}
+              </ul>
+            </div>
+            <div className="border border-amber-400/20 bg-amber-400/[0.06] p-3">
+              <div className="text-[10px] font-semibold uppercase text-amber-300">Falta para entrar</div>
+              <p className="mt-2 text-sm font-semibold text-white/85">{reading.nextCondition}</p>
+              {reading.checksPending.length > 0 && <ul className="mt-2 space-y-1 text-xs text-white/60">{reading.checksPending.map((item) => <li key={item}>• {item}</li>)}</ul>}
+            </div>
+          </div>
         </>
       )}
     </div>
+  );
+}
+
+function BacktestPanel({ history, onClear }: { history: SignalRow[]; onClear: () => void }) {
+  const trades = history.filter((row) => row.signal !== "WAIT");
+  const wins = trades.filter((row) => row.outcome === "WIN").length;
+  const losses = trades.filter((row) => row.outcome === "LOSS").length;
+  const unknown = trades.filter((row) => row.outcome === "UNKNOWN" || !row.outcome).length;
+  const decided = wins + losses;
+  const rate = decided ? Math.round((wins / decided) * 100) : 0;
+  const callCount = trades.filter((row) => row.signal === "CALL").length;
+  const putCount = trades.filter((row) => row.signal === "PUT").length;
+
+  const exportCsv = () => {
+    const rows = [
+      ["horario", "sinal", "confianca", "expiracao_min", "resultado", "motivo"],
+      ...trades.map((row) => [new Date(row.ts).toISOString(), row.signal, row.confidence, row.expirationMinutes, row.outcome ?? "PENDENTE", row.reason]),
+    ];
+    const csv = rows.map((row) => row.map((cell) => `"${String(cell).replaceAll('"', '""')}"`).join(",")).join("\n");
+    const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = "signal-vision-backtest.csv";
+    anchor.click();
+    URL.revokeObjectURL(url);
+  };
+
+  return (
+    <section className="border border-white/10 bg-white/[0.03] p-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h2 className="text-sm font-bold">Backtesting da sessão</h2>
+          <p className="mt-0.5 text-xs text-white/45">Mede apenas sinais confirmados nesta tela; não é histórico OHLC.</p>
+        </div>
+        <div className="flex gap-2">
+          <Button type="button" size="sm" variant="outline" disabled={!trades.length} onClick={exportCsv} className="border-white/10 bg-white/5 text-white hover:bg-white/10"><Download className="mr-2 h-4 w-4" /> CSV</Button>
+          <Button type="button" size="sm" variant="outline" disabled={!history.length} onClick={onClear} className="border-white/10 bg-white/5 text-white hover:bg-white/10">Limpar teste</Button>
+        </div>
+      </div>
+      <div className="mt-4 grid grid-cols-3 gap-px border border-white/10 bg-white/10 sm:grid-cols-6">
+        {[['Operações', trades.length], ['WIN', wins], ['LOSS', losses], ['Taxa', `${rate}%`], ['CALL', callCount], ['PUT', putCount]].map(([label, value]) => (
+          <div key={label} className="bg-[#0d121d] p-3 text-center"><div className="text-[10px] font-semibold uppercase text-white/40">{label}</div><div className="mt-1 text-lg font-black">{value}</div></div>
+        ))}
+      </div>
+      {unknown > 0 && <p className="mt-2 text-xs text-amber-300">{unknown} operação(ões) pendente(s) ou indefinida(s).</p>}
+    </section>
   );
 }
 
