@@ -12,6 +12,39 @@ const Input = z.object({
     .optional(),
 });
 
+const TechnicalReading = z.object({
+  trend: z.string(),
+  ema: z.string(),
+  momentum: z.string(),
+  volatility: z.string(),
+  candlePattern: z.string(),
+  supportResistance: z.string(),
+  score: z.number().min(0).max(7),
+  bias: z.enum(["CALL", "PUT", "NEUTRAL"]),
+  confluences: z.array(z.string()).max(7),
+  warnings: z.array(z.string()).max(5),
+});
+
+const AnalysisResponse = z.object({
+  signal: z.enum(["CALL", "PUT", "WAIT"]),
+  confidence: z.number().min(0).max(100),
+  reason: z.string(),
+  analysis: TechnicalReading,
+});
+
+const EMPTY_ANALYSIS = {
+  trend: "Não identificada",
+  ema: "Não identificada",
+  momentum: "Não identificado",
+  volatility: "Não identificada",
+  candlePattern: "Nenhum padrão confirmado",
+  supportResistance: "Zonas não identificadas",
+  score: 0,
+  bias: "NEUTRAL" as const,
+  confluences: [] as string[],
+  warnings: ["Leitura técnica indisponível"],
+};
+
 export const analyzeFrame = createServerFn({ method: "POST" })
   .inputValidator((data: unknown) => Input.parse(data))
   .handler(async ({ data }) => {
@@ -19,7 +52,7 @@ export const analyzeFrame = createServerFn({ method: "POST" })
     if (!key) throw new Error("LOVABLE_API_KEY não configurada");
 
     const gateway = createLovableAiGatewayProvider(key);
-    const model = gateway("google/gemini-3-flash-preview");
+    const model = gateway("google/gemini-3.8-flash");
 
     const statsBlock = data.stats
       ? `\n\nDESEMPENHO RECENTE: ${data.stats.wins} WINs / ${data.stats.losses} LOSSes. Se a taxa de acerto está baixa, aperte ainda mais os critérios.`
@@ -85,8 +118,8 @@ Contra-sinais que ANULAM o trade mesmo com score alto:
 - Score <4, lateral, doji, indecisão, sinais mistos, próximo de S/R contrário → WAIT.
 - Na dúvida, SEMPRE WAIT. Um LOSS custa mais que 10 WAITs.${statsBlock}${lessonsBlock}
 
-Retorne APENAS JSON válido (sem markdown, sem \`\`\`):
-{"signal":"CALL"|"PUT"|"WAIT","confidence":0-100,"reason":"máx 16 palavras citando as principais confluências (ex: EMA9>EMA21, engolfo, rompeu resistência)"}`;
+Retorne APENAS JSON válido (sem markdown, sem \`\`\`). Todos os textos devem ser curtos e em português:
+{"signal":"CALL"|"PUT"|"WAIT","confidence":0-100,"reason":"máx 16 palavras","analysis":{"trend":"HH/HL, LH/LL ou lateral + direção","ema":"posição e relação estimada EMA9/EMA21","momentum":"força, RSI mental e divergência","volatility":"expansão, normal ou squeeze","candlePattern":"padrão dos 3 últimos candles e candle atual","supportResistance":"zona mais próxima e risco","score":0-7,"bias":"CALL"|"PUT"|"NEUTRAL","confluences":["evidências objetivas a favor"],"warnings":["contra-sinais encontrados"]}}`;
 
     const start = Date.now();
     const result = await generateText({
@@ -103,12 +136,25 @@ Retorne APENAS JSON válido (sem markdown, sem \`\`\`):
     });
 
     const latencyMs = Date.now() - start;
-    let parsed: { signal: "CALL" | "PUT" | "WAIT"; confidence: number; reason: string };
+    let parsed: z.infer<typeof AnalysisResponse>;
     try {
       const cleaned = result.text.replace(/```json\s*|\s*```/g, "").trim();
-      parsed = JSON.parse(cleaned);
+      const checked = AnalysisResponse.safeParse(JSON.parse(cleaned));
+      parsed = checked.success
+        ? checked.data
+        : {
+            signal: "WAIT",
+            confidence: 0,
+            reason: "Resposta técnica incompleta",
+            analysis: EMPTY_ANALYSIS,
+          };
     } catch {
-      parsed = { signal: "WAIT", confidence: 0, reason: "Falha ao interpretar resposta" };
+      parsed = {
+        signal: "WAIT",
+        confidence: 0,
+        reason: "Falha ao interpretar resposta",
+        analysis: EMPTY_ANALYSIS,
+      };
     }
     return { ...parsed, latencyMs };
   });
@@ -126,7 +172,7 @@ export const evaluateOutcome = createServerFn({ method: "POST" })
     if (!key) throw new Error("LOVABLE_API_KEY não configurada");
 
     const gateway = createLovableAiGatewayProvider(key);
-    const model = gateway("google/gemini-3-flash-preview");
+    const model = gateway("google/gemini-3.8-flash");
 
     const prompt = `Você é um auditor de operações de opções binárias M1. Uma ordem foi aberta a 1 minuto atrás com direção ${data.signal} (${data.signal === "CALL" ? "aposta em ALTA" : "aposta em BAIXA"}).
 Motivo original: "${data.reason}".
