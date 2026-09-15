@@ -20,9 +20,13 @@ const TechnicalReading = z.object({
   volatility: z.string(),
   candlePattern: z.string(),
   supportResistance: z.string(),
-  score: z.number().min(0).max(7),
+  macd: z.string(),
+  stochastic: z.string(),
+  fibonacci: z.string(),
+  volume: z.string(),
+  score: z.number().min(0).max(10),
   bias: z.enum(["CALL", "PUT", "NEUTRAL"]),
-  confluences: z.array(z.string()).max(7),
+  confluences: z.array(z.string()).max(10),
   warnings: z.array(z.string()).max(5),
   overlay: z.object({
     supportY: z.number().min(0).max(100).nullable(),
@@ -47,6 +51,10 @@ const EMPTY_ANALYSIS = {
   volatility: "Não identificada",
   candlePattern: "Nenhum padrão confirmado",
   supportResistance: "Zonas não identificadas",
+  macd: "Não visível no gráfico",
+  stochastic: "Não visível no gráfico",
+  fibonacci: "Não identificável com segurança",
+  volume: "Não visível no gráfico",
   score: 0,
   bias: "NEUTRAL" as const,
   confluences: [] as string[],
@@ -110,8 +118,16 @@ F) CANDLE ATUAL (em formação)
    - Corpo dominante (>60% do range) confirma direção. Pavio grande do lado oposto = fraqueza.
    - Posição dentro do candle: início/meio/perto do fechamento M1?
 
+G) CONFIRMAÇÕES DOS E-BOOKS ENVIADOS
+   - MACD: se estiver visível, valide cruzamento da linha de sinal, posição em relação ao zero e divergência. Se não estiver visível, declare isso; não invente valores.
+   - Estocástico: se estiver visível, priorize cruzamentos de %K/%D nas zonas extremas (>80 ou <20). Se não estiver visível, declare isso.
+   - Fibonacci: use 23,6%, 38,2%, 50%, 61,8% e 78,6% apenas quando houver um impulso e pivôs claramente identificáveis; nunca use Fibonacci sozinho.
+   - Volume: quando visível, exija aumento de volume para confirmar rompimentos. Sem volume visível, não atribua confirmação.
+   - Combine indicadores. RSI/Bollinger, médias, MACD, Estocástico ou Fibonacci isolados nunca autorizam entrada.
+   - Os livros tratam IA como apoio e exigem dados históricos e validação humana; portanto não fabrique cálculos exatos a partir de pixels.
+
 ===== SCORE DE CONFLUÊNCIA =====
-Some pontos a favor da direção pretendida (A-F). Só emita CALL/PUT se tiver **≥4 confluências alinhadas** e nenhum contra-sinal forte:
+Some pontos a favor da direção pretendida. Só emita CALL/PUT se tiver **≥5 confluências alinhadas em pelo menos 3 categorias** e nenhum contra-sinal forte:
    - Estrutura a favor (+1)
    - Preço acima/abaixo da EMA9 na direção (+1)
    - EMA9 acima/abaixo da EMA21 na direção (+1)
@@ -119,6 +135,9 @@ Some pontos a favor da direção pretendida (A-F). Só emita CALL/PUT se tiver *
    - Padrão de candle confirmando (+1)
    - Candle atual com corpo dominante na direção (+1)
    - Distância adequada de S/R (não colado em zona contrária) (+1)
+   - MACD ou Estocástico visível confirma a direção (+1)
+   - Volume visível confirma ou há reação clara em Fibonacci (+1)
+   - Entrada ocorre após rejeição/reteste, não no meio de um impulso esticado (+1)
 
 Contra-sinais que ANULAM o trade mesmo com score alto:
    - Pavio grande contrário no candle atual
@@ -128,15 +147,15 @@ Contra-sinais que ANULAM o trade mesmo com score alto:
    - OTC com movimento recente >3 candles fortes seguidos (exaustão iminente)
 
 ===== REGRAS DE DECISÃO =====
-- CALL: score ≥4, viés altista, sem contra-sinal, candle atual verde com corpo forte. Confidence 72-95 conforme força.
-- PUT: score ≥4, viés baixista, sem contra-sinal, candle atual vermelho com corpo forte. Confidence 72-95.
-- Score <4, lateral, doji, indecisão, sinais mistos, próximo de S/R contrário → WAIT.
+- CALL: score ≥5, viés altista, sem contra-sinal, candle atual verde com corpo forte. Confidence 72-95 conforme força.
+- PUT: score ≥5, viés baixista, sem contra-sinal, candle atual vermelho com corpo forte. Confidence 72-95.
+- Score <5, lateral, doji, indecisão, sinais mistos, próximo de S/R contrário → WAIT.
 - Na dúvida, SEMPRE WAIT. Um LOSS custa mais que 10 WAITs.${statsBlock}${lessonsBlock}
 
 Retorne APENAS JSON válido (sem markdown, sem \`\`\`). Todos os textos devem ser curtos e em português:
-As coordenadas do overlay são porcentagens (0 a 100) da imagem inteira. Posicione suporte e resistência na altura exata das zonas visíveis; a linha de tendência deve ligar dois pivôs reais; entry aponta para a vela atual. Use null quando não for possível localizar com segurança.
+As coordenadas do overlay são porcentagens (0 a 100) da imagem inteira. Posicione suporte e resistência na altura exata das zonas visíveis; a linha de tendência deve ligar dois pivôs reais; entry aponta para a vela atual. Use null quando não for possível localizar com segurança. Suporte, resistência e tendência são zonas estruturais: não os desloque por causa de uma única vela nova.
 
-{"signal":"CALL"|"PUT"|"WAIT","confidence":0-100,"reason":"máx 16 palavras","analysis":{"trend":"HH/HL, LH/LL ou lateral + direção","ema":"posição e relação estimada EMA9/EMA21","momentum":"força, RSI mental e divergência","volatility":"expansão, normal ou squeeze","candlePattern":"padrão dos 3 últimos candles e candle atual","supportResistance":"zona mais próxima e risco","score":0-7,"bias":"CALL"|"PUT"|"NEUTRAL","confluences":["evidências objetivas a favor"],"warnings":["contra-sinais encontrados"],"overlay":{"supportY":0-100|null,"resistanceY":0-100|null,"trendStart":{"x":0-100,"y":0-100}|null,"trendEnd":{"x":0-100,"y":0-100}|null,"entry":{"x":0-100,"y":0-100}|null}}}`;
+{"signal":"CALL"|"PUT"|"WAIT","confidence":0-100,"reason":"máx 16 palavras","analysis":{"trend":"HH/HL, LH/LL ou lateral + direção","ema":"posição e relação estimada EMA9/EMA21","momentum":"força, RSI mental e divergência","volatility":"expansão, normal ou squeeze","candlePattern":"padrão dos 3 últimos candles e candle atual","supportResistance":"zona mais próxima e risco","macd":"leitura visível ou não visível","stochastic":"leitura visível ou não visível","fibonacci":"nível relevante ou não identificável","volume":"confirmação visível ou não visível","score":0-10,"bias":"CALL"|"PUT"|"NEUTRAL","confluences":["evidências objetivas a favor"],"warnings":["contra-sinais encontrados"],"overlay":{"supportY":0-100|null,"resistanceY":0-100|null,"trendStart":{"x":0-100,"y":0-100}|null,"trendEnd":{"x":0-100,"y":0-100}|null,"entry":{"x":0-100,"y":0-100}|null}}}`;
 
     const start = Date.now();
     const result = await generateText({
