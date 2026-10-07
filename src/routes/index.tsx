@@ -623,8 +623,9 @@ function Index() {
     <div className="min-h-screen bg-[#0a0e17] text-white">
       <header className="border-b border-white/5 px-6 py-4 flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <div className="h-9 w-9 rounded-xl bg-gradient-to-br from-primary/20 via-primary/10 to-transparent border border-primary/30 flex items-center justify-center animate-signal-glow">
-            <Zap className="h-5 w-5 text-primary animate-pulse" />
+          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary/10 border border-primary/20 text-primary animate-pulse relative">
+            <div className="absolute inset-0 rounded-xl bg-primary/20 animate-ping opacity-75" />
+            <Zap className="h-5 w-5 relative z-10 animate-bounce" />
           </div>
           <div>
             <h1 className="font-extrabold tracking-tight text-lg bg-gradient-to-r from-cyan-400 via-sky-200 to-fuchsia-400 bg-clip-text text-transparent animate-text-shimmer animate-signal-glow">
