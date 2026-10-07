@@ -199,14 +199,13 @@ function Index() {
   const unlockSound = useCallback(() => {
     if (!soundRef.current) return false;
     try {
-      const AudioContextCtor = window.AudioContext ??
+      const AudioContextCtor = window.AudioContext ||
         (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
       if (!AudioContextCtor) return false;
       const ctx = audioContextRef.current ?? new AudioContextCtor();
       audioContextRef.current = ctx;
       if (ctx.state === "suspended") void ctx.resume();
 
-      // A fonte silenciosa, criada dentro do clique, desbloqueia áudio no Chrome/Safari.
       const source = ctx.createBufferSource();
       source.buffer = ctx.createBuffer(1, 1, 22050);
       source.connect(ctx.destination);
@@ -378,7 +377,6 @@ function Index() {
           expirationMinutes: pending.expirationMinutes,
         },
       });
-      // Atualiza histórico e sinal atual
       setHistory((h) =>
         h.map((r) => {
           const next = r.id === pending.id ? { ...r, outcome: res.outcome, lesson: res.lesson } : r;
@@ -410,7 +408,7 @@ function Index() {
         saveLessons(lessonsRef.current);
       }
     } catch {
-      // silencioso; se falhar, segue vida
+      // silencioso
     } finally {
       pendingTradeRef.current = null;
     }
@@ -425,11 +423,9 @@ function Index() {
     while (runningRef.current) {
       const cycleStart = Date.now();
 
-      // Trava de ciclo — durante o M1 da ordem aberta, apenas espera
       if (lockUntilRef.current > Date.now()) {
         const remaining = Math.ceil((lockUntilRef.current - Date.now()) / 1000);
         setLockRemaining(remaining);
-        // Ao expirar, dispara avaliação da ordem
         if (evaluateAtRef.current && Date.now() >= evaluateAtRef.current) {
           evaluateAtRef.current = 0;
           void runEvaluation();
@@ -439,7 +435,6 @@ function Index() {
       }
       if (lockRemaining !== 0) setLockRemaining(0);
 
-      // Garante que a avaliação rode ao sair do lock
       if (evaluateAtRef.current && Date.now() >= evaluateAtRef.current) {
         evaluateAtRef.current = 0;
         await runEvaluation();
@@ -472,7 +467,6 @@ function Index() {
         const rawSignal: SignalKind =
           res.signal !== "WAIT" && res.confidence < MIN_CONFIDENCE ? "WAIT" : res.signal;
 
-        // Confirmação em duas leituras compatível com a latência real da IA.
         let signal: SignalKind = "WAIT";
         let confirmedReason = res.reason;
         let candidateSignal: "CALL" | "PUT" | undefined;
@@ -628,13 +622,15 @@ function Index() {
   return (
     <div className="min-h-screen bg-[#0a0e17] text-white">
       <header className="border-b border-white/5 px-6 py-4 flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <div className="h-9 w-9 rounded-lg bg-gradient-to-br from-emerald-400 to-cyan-500 flex items-center justify-center">
-            <Zap className="h-5 w-5 text-black" strokeWidth={3} />
+        <div className="flex items-center gap-2">
+          <div className="h-9 w-9 rounded-xl bg-gradient-to-br from-primary/20 via-primary/10 to-transparent border border-primary/30 flex items-center justify-center animate-signal-glow">
+            <Zap className="h-5 w-5 text-primary animate-pulse" />
           </div>
           <div>
-            <h1 className="font-bold text-lg leading-none">Signal Vision</h1>
-            <p className="text-xs text-white/50 mt-0.5">Análise de tela em tempo real</p>
+            <h1 className="font-extrabold tracking-tight text-lg bg-gradient-to-r from-cyan-400 via-sky-200 to-fuchsia-400 bg-clip-text text-transparent animate-text-shimmer animate-signal-glow">
+              Signal Vision
+            </h1>
+            <p className="text-xs text-white/50">IA • Análise Técnica ao Vivo</p>
           </div>
         </div>
         <div className="flex items-center gap-3">
@@ -722,19 +718,15 @@ function Index() {
               </div>
             )}
             {sharing && (
-              <>
-                {/* Scanning sweep overlay */}
-                <div className="pointer-events-none absolute inset-0 overflow-hidden">
-                  {running && !current?.analysis && (
-                    <div className="absolute inset-x-0 h-24 -top-24 bg-gradient-to-b from-transparent via-emerald-400/20 to-transparent animate-scan" />
-                  )}
-                  {/* Corner brackets */}
-                  <div className="absolute top-2 left-2 h-6 w-6 border-t-2 border-l-2 border-emerald-400/60" />
-                  <div className="absolute top-2 right-2 h-6 w-6 border-t-2 border-r-2 border-emerald-400/60" />
-                  <div className="absolute bottom-2 left-2 h-6 w-6 border-b-2 border-l-2 border-emerald-400/60" />
-                  <div className="absolute bottom-2 right-2 h-6 w-6 border-b-2 border-r-2 border-emerald-400/60" />
-                </div>
-              </>
+              <div className="pointer-events-none absolute inset-0 overflow-hidden">
+                {running && !current?.analysis && (
+                  <div className="absolute inset-x-0 h-24 -top-24 bg-gradient-to-b from-transparent via-emerald-400/20 to-transparent animate-scan" />
+                )}
+                <div className="absolute top-2 left-2 h-6 w-6 border-t-2 border-l-2 border-emerald-400/60" />
+                <div className="absolute top-2 right-2 h-6 w-6 border-t-2 border-r-2 border-emerald-400/60" />
+                <div className="absolute bottom-2 left-2 h-6 w-6 border-b-2 border-l-2 border-emerald-400/60" />
+                <div className="absolute bottom-2 right-2 h-6 w-6 border-b-2 border-r-2 border-emerald-400/60" />
+              </div>
             )}
             {analyzing && sharing && (
               <div className="absolute top-3 right-3 flex items-center gap-2 bg-black/70 backdrop-blur rounded-full px-3 py-1.5 text-xs">

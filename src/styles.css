@@ -99,6 +99,30 @@
   0% { transform: translateY(0); }
   100% { transform: translateY(calc(100vh + 100%)); }
 }
+@keyframes signal-glow {
+  0%, 100% {
+    opacity: 1;
+    filter: drop-shadow(0 0 8px rgba(56, 189, 248, 0.6)) drop-shadow(0 0 20px rgba(168, 85, 247, 0.4));
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.85;
+    filter: drop-shadow(0 0 16px rgba(56, 189, 248, 0.9)) drop-shadow(0 0 35px rgba(236, 72, 153, 0.6));
+    transform: scale(1.02);
+  }
+}
+@keyframes text-shimmer {
+  0% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+.animate-signal-glow {
+  animation: signal-glow 3s ease-in-out infinite;
+}
+.animate-text-shimmer {
+  background-size: 200% auto;
+  animation: text-shimmer 4s linear infinite;
+}
 @keyframes signal-pop {
   0% { transform: scale(0.94); opacity: 0.4; }
   60% { transform: scale(1.03); opacity: 1; }
