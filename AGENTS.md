@@ -1,0 +1,2 @@
+# Architecture rules
+- Translate service codes and technical vocabulary at presentation boundaries through the shared Portuguese text module; preserve stored and service values to maintain compatibility.
