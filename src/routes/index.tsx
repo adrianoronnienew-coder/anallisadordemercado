@@ -48,7 +48,7 @@ export const Route = createFileRoute("/")({
   }),
 });
 
-type SignalKind = "CALL" | "PUT" | "WAIT";
+type SignalKind = "CALL" | "PUT" | "AGUARDAR";
 type Outcome = "WIN" | "LOSS" | "UNKNOWN" | null;
 type TechnicalReading = {
   trend: string;
@@ -1230,6 +1230,7 @@ function OutcomeBadge({ outcome, lesson }: { outcome: Outcome; lesson?: string }
 function HistoryRow({ row }: { row: SignalRow }) {
   const isCall = row.signal === "CALL";
   const isPut = row.signal === "PUT";
+  const isWait = row.signal === "AGUARDAR";
   const color = isCall ? "text-emerald-400" : isPut ? "text-red-400" : "text-white/50";
   const Icon = isCall ? TrendingUp : isPut ? TrendingDown : Minus;
   const time = new Date(row.ts).toLocaleTimeString("pt-BR", { hour12: false });
