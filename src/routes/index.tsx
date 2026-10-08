@@ -2,6 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useServerFn } from "@tanstack/react-start";
 import { Button } from "@/components/ui/button";
+import { portugueseText, signalLabel, outcomeLabel } from "@/lib/portuguese-text";
 import { analyzeFrame, evaluateOutcome } from "@/lib/analyze.functions";
 import {
   Play,
@@ -32,15 +33,15 @@ export const Route = createFileRoute("/")({
   component: Index,
   head: () => ({
     meta: [
-      { title: "Signal Vision — Análise de tela em tempo real" },
+      { title: "Visão de Sinais — Análise de tela em tempo real" },
       {
         name: "description",
         content: "Análise de gráficos em tempo real por IA através de compartilhamento de tela.",
       },
-      { property: "og:title", content: "Signal Vision — Análise de tela em tempo real" },
+      { property: "og:title", content: "Visão de Sinais — Análise de tela em tempo real" },
       {
         property: "og:description",
-        content: "Leitura técnica visual e sinais CALL/PUT a partir do gráfico compartilhado.",
+        content: "Leitura técnica visual e sinais de compra e venda a partir do gráfico compartilhado.",
       },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary_large_image" },
@@ -48,7 +49,7 @@ export const Route = createFileRoute("/")({
   }),
 });
 
-type SignalKind = "CALL" | "PUT" | "AGUARDAR";
+type SignalKind = "CALL" | "PUT" | "WAIT" | "AGUARDAR";
 type Outcome = "WIN" | "LOSS" | "UNKNOWN" | null;
 type TechnicalReading = {
   trend: string;
@@ -339,7 +340,7 @@ function Index() {
       setSharing(true);
       unlockSound();
     } catch (e: any) {
-      setError(e?.message ?? "Falha ao compartilhar tela");
+      setError("Não foi possível compartilhar a tela. Verifique a permissão do navegador e tente novamente.");
     }
   }, [stopSharing, unlockSound]);
 
@@ -481,14 +482,14 @@ function Index() {
             lastCandidateRef.current = { signal: rawSignal, ts: Date.now(), remainingChecks: 3 };
             candidateSignal = rawSignal;
             alertCandidate();
-            confirmedReason = `Candidato ${rawSignal} (${res.confidence}%) — aguardando confirmação`;
+            confirmedReason = `Candidato à ${signalLabel(rawSignal).toLowerCase()} (${res.confidence}%) — aguardando confirmação`;
           }
         } else {
           const last = lastCandidateRef.current;
           if (last && Date.now() - last.ts < CANDIDATE_TTL_MS && last.remainingChecks > 1) {
             lastCandidateRef.current = { ...last, remainingChecks: last.remainingChecks - 1 };
             candidateSignal = last.signal;
-            confirmedReason = `Candidato ${last.signal} mantido — aguardando nova confirmação`;
+            confirmedReason = `Candidato à ${signalLabel(last.signal).toLowerCase()} mantido — aguardando nova confirmação`;
           } else {
             lastCandidateRef.current = null;
           }
@@ -517,7 +518,7 @@ function Index() {
             signal === "WAIT" && rawSignal !== "WAIT"
               ? confirmedReason
               : signal === "WAIT" && res.signal !== "WAIT"
-                ? `Confiança baixa (${res.confidence}%) — aguardando setup mais claro`
+                ? `Confiança baixa (${res.confidence}%) — aguardando configuração mais clara`
                 : res.reason,
           latencyMs: res.latencyMs,
           outcome: null,
@@ -547,11 +548,11 @@ function Index() {
         const is429 = /429|too many|rate/i.test(msg);
         if (is429) {
           backoffMs = Math.min(backoffMs ? backoffMs * 2 : 4000, 30000);
-          setError(`Rate limit atingido — aguardando ${Math.round(backoffMs / 1000)}s…`);
+          setError(`Limite de solicitações atingido — aguardando ${Math.round(backoffMs / 1000)}s…`);
           setAnalysisStage("Pausado pelo limite do serviço");
         } else {
           backoffMs = 1500;
-          setError(msg || "Erro na análise");
+          setError("Não foi possível concluir a análise. Tente novamente.");
           setAnalysisStage("Falha na análise");
         }
         await new Promise((r) => setTimeout(r, backoffMs));
@@ -629,7 +630,7 @@ function Index() {
           </div>
           <div>
             <h1 className="font-extrabold tracking-tight text-lg bg-gradient-to-r from-cyan-400 via-sky-200 to-fuchsia-400 bg-clip-text text-transparent animate-text-shimmer animate-signal-glow">
-              Signal Vision
+              Visão de Sinais
             </h1>
             <p className="text-xs text-white/50">IA • Análise Técnica ao Vivo</p>
           </div>
@@ -780,8 +781,8 @@ function Index() {
                 <Search className="h-4 w-4 text-cyan-300" /> Foco {zoom.toFixed(1)}×
               </div>
               <label className="text-[10px] font-semibold uppercase text-white/40">
-                Zoom
-                <input aria-label="Zoom do gráfico" className="mt-1 block w-full accent-cyan-400" type="range" min="1" max="2.5" step="0.1" value={zoom} onChange={(event) => updateZoom(Number(event.target.value))} />
+                Ampliação
+                <input aria-label="Ampliação do gráfico" className="mt-1 block w-full accent-cyan-400" type="range" min="1" max="2.5" step="0.1" value={zoom} onChange={(event) => updateZoom(Number(event.target.value))} />
               </label>
               <div className="grid grid-cols-2 gap-2">
                 <label className="text-[10px] font-semibold uppercase text-white/40">Horizontal<input aria-label="Foco horizontal" className="mt-1 block w-full accent-cyan-400" type="range" min="0" max="100" value={focusX} disabled={zoom === 1} onChange={(event) => updateFocusX(Number(event.target.value))} /></label>
@@ -942,7 +943,7 @@ function CurrentSignal({
               Em observação
             </div>
           )}
-          <div className={`text-4xl font-black ${color} leading-none`}>{displaySignal}</div>
+          <div className={`text-4xl font-black ${color} leading-none`}>{signalLabel(displaySignal)}</div>
           <div className={`mt-2 text-sm font-black ${row.candidateSignal ? "text-amber-300" : color}`}>{command}</div>
           <div className="text-sm text-white/60 mt-1">{row.confidence}% de confiança</div>
         </div>
@@ -955,7 +956,7 @@ function CurrentSignal({
           style={{ width: `${row.confidence}%` }}
         />
       </div>
-      <p className="mt-3 text-sm text-white/70">{row.reason}</p>
+      <p className="mt-3 text-sm text-white/70">{portugueseText(row.reason)}</p>
       {lockRemaining > 0 && active && (
         <div className="mt-4 rounded-lg bg-black/40 border border-white/10 px-3 py-3">
           <div className="flex items-center justify-between mb-2">
@@ -1044,7 +1045,7 @@ function ChartOverlay({
               <TrendingDown className={`h-14 w-14 drop-shadow-lg ${candidate ? "opacity-60" : "animate-bounce-short fill-current"}`} strokeWidth={3} />
             )}
             <span className={`mt-1 border px-2 py-1 text-xs font-black ${isCall ? "border-emerald-300 bg-emerald-500/90 text-black" : "border-red-300 bg-red-500/90 text-white"}`}>
-              {candidate ? `${signal} · OBSERVAR` : signal === "CALL" ? "COMPRE AGORA" : "VENDA AGORA"}
+              {candidate ? `${signalLabel(signal)} · OBSERVAR` : signal === "CALL" ? "COMPRE AGORA" : "VENDA AGORA"}
             </span>
           </div>
         </div>
@@ -1066,17 +1067,17 @@ function TechnicalPanel({
   const items = reading
     ? [
         { label: "Tendência", value: reading.trend, Icon: Activity },
-        { label: "EMA 9 / 21", value: reading.ema, Icon: Waves },
-        { label: "EMA 50", value: reading.ema50, Icon: Waves },
-        { label: "Momentum", value: reading.momentum, Icon: Gauge },
-        { label: "RSI 14", value: reading.rsi, Icon: Gauge },
+        { label: "Médias exponenciais 9 / 21", value: reading.ema, Icon: Waves },
+        { label: "Média exponencial 50", value: reading.ema50, Icon: Waves },
+        { label: "Força do movimento", value: reading.momentum, Icon: Gauge },
+        { label: "Índice de força relativa 14", value: reading.rsi, Icon: Gauge },
         { label: "Velas", value: reading.candlePattern, Icon: CandlestickChart },
         { label: "Suporte / resistência", value: reading.supportResistance, Icon: Target },
         { label: "Volatilidade", value: reading.volatility, Icon: Activity },
-        { label: "Bollinger", value: reading.bollinger, Icon: Waves },
-        { label: "ATR", value: reading.atr, Icon: Activity },
-        { label: "ADX", value: reading.adx, Icon: Gauge },
-        { label: "MACD", value: reading.macd, Icon: Waves },
+        { label: "Bandas de Bollinger", value: reading.bollinger, Icon: Waves },
+        { label: "Amplitude média real", value: reading.atr, Icon: Activity },
+        { label: "Índice direcional médio", value: reading.adx, Icon: Gauge },
+        { label: "Convergência de médias móveis", value: reading.macd, Icon: Waves },
         { label: "Estocástico", value: reading.stochastic, Icon: Gauge },
         { label: "Fibonacci", value: reading.fibonacci, Icon: Target },
         { label: "Volume", value: reading.volume, Icon: Activity },
@@ -1094,11 +1095,11 @@ function TechnicalPanel({
           <div className="flex items-center gap-2">
             {candidate && (
               <span className="rounded border border-amber-400/30 bg-amber-400/10 px-2 py-1 text-xs font-semibold text-amber-300">
-                Observando {candidate}
+                Observando {signalLabel(candidate)}
               </span>
             )}
             <span className="rounded border border-white/10 bg-black/30 px-2 py-1 text-xs font-bold">
-              Score {reading.score}/10
+              Pontuação {reading.score}/10
             </span>
           </div>
         )}
@@ -1114,7 +1115,7 @@ function TechnicalPanel({
                 <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-wider text-white/40">
                   <Icon className="h-3.5 w-3.5 text-cyan-400" /> {label}
                 </div>
-                <p className="mt-2 text-sm leading-snug text-white/75">{value}</p>
+                <p className="mt-2 text-sm leading-snug text-white/75">{portugueseText(value)}</p>
               </div>
             ))}
           </div>
@@ -1122,7 +1123,7 @@ function TechnicalPanel({
             <div className="rounded border border-emerald-400/20 bg-emerald-400/[0.06] p-3">
               <div className="text-[10px] font-semibold uppercase tracking-wider text-emerald-300">Confluências</div>
               <ul className="mt-2 space-y-1 text-xs text-white/70">
-                {reading.confluences.length ? reading.confluences.map((item) => <li key={item}>+ {item}</li>) : <li>Nenhuma confirmação forte</li>}
+                {reading.confluences.length ? reading.confluences.map((item) => <li key={item}>+ {portugueseText(item)}</li>) : <li>Nenhuma confirmação forte</li>}
               </ul>
             </div>
             <div className="rounded border border-amber-400/20 bg-amber-400/[0.06] p-3">
@@ -1130,21 +1131,21 @@ function TechnicalPanel({
                 <TriangleAlert className="h-3.5 w-3.5" /> Alertas técnicos
               </div>
               <ul className="mt-2 space-y-1 text-xs text-white/70">
-                {reading.warnings.length ? reading.warnings.map((item) => <li key={item}>• {item}</li>) : <li>Nenhum contra-sinal forte</li>}
+                {reading.warnings.length ? reading.warnings.map((item) => <li key={item}>• {portugueseText(item)}</li>) : <li>Nenhum contra-sinal forte</li>}
               </ul>
             </div>
           </div>
           <div className="mt-3 grid gap-3 sm:grid-cols-2">
             <div className="border border-cyan-400/20 bg-cyan-400/[0.06] p-3">
-              <div className="text-[10px] font-semibold uppercase text-cyan-300">Checklist aprovado</div>
+              <div className="text-[10px] font-semibold uppercase text-cyan-300">Critérios aprovados</div>
               <ul className="mt-2 space-y-1 text-xs text-white/70">
-                {reading.checksPassed.length ? reading.checksPassed.map((item) => <li key={item}>✓ {item}</li>) : <li>Nenhum critério aprovado</li>}
+                {reading.checksPassed.length ? reading.checksPassed.map((item) => <li key={item}>✓ {portugueseText(item)}</li>) : <li>Nenhum critério aprovado</li>}
               </ul>
             </div>
             <div className="border border-amber-400/20 bg-amber-400/[0.06] p-3">
               <div className="text-[10px] font-semibold uppercase text-amber-300">Falta para entrar</div>
-              <p className="mt-2 text-sm font-semibold text-white/85">{reading.nextCondition}</p>
-              {reading.checksPending.length > 0 && <ul className="mt-2 space-y-1 text-xs text-white/60">{reading.checksPending.map((item) => <li key={item}>• {item}</li>)}</ul>}
+              <p className="mt-2 text-sm font-semibold text-white/85">{portugueseText(reading.nextCondition)}</p>
+              {reading.checksPending.length > 0 && <ul className="mt-2 space-y-1 text-xs text-white/60">{reading.checksPending.map((item) => <li key={item}>• {portugueseText(item)}</li>)}</ul>}
             </div>
           </div>
         </>
@@ -1166,13 +1167,13 @@ function BacktestPanel({ history, onClear }: { history: SignalRow[]; onClear: ()
   const exportCsv = () => {
     const rows = [
       ["horario", "sinal", "confianca", "expiracao_min", "resultado", "motivo"],
-      ...trades.map((row) => [new Date(row.ts).toISOString(), row.signal, row.confidence, row.expirationMinutes, row.outcome ?? "PENDENTE", row.reason]),
+      ...trades.map((row) => [new Date(row.ts).toISOString(), signalLabel(row.signal), row.confidence, row.expirationMinutes, outcomeLabel(row.outcome), portugueseText(row.reason)]),
     ];
     const csv = rows.map((row) => row.map((cell) => `"${String(cell).replaceAll('"', '""')}"`).join(",")).join("\n");
     const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
     const anchor = document.createElement("a");
     anchor.href = url;
-    anchor.download = "signal-vision-backtest.csv";
+    anchor.download = "visao-de-sinais-teste-da-sessao.csv";
     anchor.click();
     URL.revokeObjectURL(url);
   };
@@ -1181,16 +1182,16 @@ function BacktestPanel({ history, onClear }: { history: SignalRow[]; onClear: ()
     <section className="border border-white/10 bg-white/[0.03] p-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h2 className="text-sm font-bold">Backtesting da sessão</h2>
-          <p className="mt-0.5 text-xs text-white/45">Mede apenas sinais confirmados nesta tela; não é histórico OHLC.</p>
+          <h2 className="text-sm font-bold">Teste da sessão</h2>
+          <p className="mt-0.5 text-xs text-white/45">Mede apenas sinais confirmados nesta tela; não é histórico de abertura, máxima, mínima e fechamento.</p>
         </div>
         <div className="flex gap-2">
-          <Button type="button" size="sm" variant="outline" disabled={!trades.length} onClick={exportCsv} className="border-white/10 bg-white/5 text-white hover:bg-white/10"><Download className="mr-2 h-4 w-4" /> CSV</Button>
+          <Button type="button" size="sm" variant="outline" disabled={!trades.length} onClick={exportCsv} className="border-white/10 bg-white/5 text-white hover:bg-white/10"><Download className="mr-2 h-4 w-4" /> Exportar planilha</Button>
           <Button type="button" size="sm" variant="outline" disabled={!history.length} onClick={onClear} className="border-white/10 bg-white/5 text-white hover:bg-white/10">Limpar teste</Button>
         </div>
       </div>
       <div className="mt-4 grid grid-cols-3 gap-px border border-white/10 bg-white/10 sm:grid-cols-6">
-        {[["Operações", trades.length], ["WIN", wins], ["LOSS", losses], ["Taxa", `${rate}%`], ["CALL", callCount], ["PUT", putCount]].map(([label, value]) => (
+        {[["Operações", trades.length], ["Vitórias", wins], ["Derrotas", losses], ["Taxa", `${rate}%`], ["Compras", callCount], ["Vendas", putCount]].map(([label, value]) => (
           <div key={label} className="bg-[#0d121d] p-3 text-center"><div className="text-[10px] font-semibold uppercase text-white/40">{label}</div><div className="mt-1 text-lg font-black">{value}</div></div>
         ))}
       </div>
@@ -1205,9 +1206,9 @@ function OutcomeBadge({ outcome, lesson }: { outcome: Outcome; lesson?: string }
     WIN: {
       cls: "bg-emerald-500/15 border-emerald-500/40 text-emerald-300",
       Icon: Check,
-      label: "WIN",
+      label: "Vitória",
     },
-    LOSS: { cls: "bg-red-500/15 border-red-500/40 text-red-300", Icon: X, label: "LOSS" },
+    LOSS: { cls: "bg-red-500/15 border-red-500/40 text-red-300", Icon: X, label: "Derrota" },
     UNKNOWN: {
       cls: "bg-white/5 border-white/20 text-white/60",
       Icon: HelpCircle,
@@ -1222,7 +1223,7 @@ function OutcomeBadge({ outcome, lesson }: { outcome: Outcome; lesson?: string }
         <Icon className="h-4 w-4" strokeWidth={3} />
         <span className="text-sm font-bold">Resultado: {cfg.label}</span>
       </div>
-      {lesson && <p className="text-xs mt-1 opacity-80">Lição: {lesson}</p>}
+      {lesson && <p className="text-xs mt-1 opacity-80">Lição: {portugueseText(lesson)}</p>}
     </div>
   );
 }
@@ -1230,8 +1231,7 @@ function OutcomeBadge({ outcome, lesson }: { outcome: Outcome; lesson?: string }
 function HistoryRow({ row }: { row: SignalRow }) {
   const isCall = row.signal === "CALL";
   const isPut = row.signal === "PUT";
-  const isWait = row.signal === "AGUARDAR" || row.signal === ("WAIT" as SignalKind);
-  const signalLabel = isWait ? "WAIT" : row.signal;
+  const label = signalLabel(row.signal);
   const color = isCall ? "text-emerald-400" : isPut ? "text-red-400" : "text-amber-300/80";
   const Icon = isCall ? TrendingUp : isPut ? TrendingDown : Minus;
   const time = new Date(row.ts).toLocaleTimeString("pt-BR", { hour12: false });
@@ -1250,11 +1250,11 @@ function HistoryRow({ row }: { row: SignalRow }) {
       <Icon className={`h-4 w-4 ${color}`} strokeWidth={2.5} />
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2">
-          <span className={`text-sm font-bold ${color}`}>{signalLabel}</span>
+          <span className={`text-sm font-bold ${color}`}>{label}</span>
           <span className="text-xs text-white/40">{row.confidence}%</span>
           {outcomeDot && <span className={`h-2 w-2 rounded-full ${outcomeDot}`} />}
         </div>
-        <p className="text-xs text-white/50 truncate">{row.lesson || row.reason}</p>
+        <p className="text-xs text-white/50 truncate">{portugueseText(row.lesson || row.reason)}</p>
       </div>
       <span className="text-[10px] text-white/30 tabular-nums">{time}</span>
     </div>
