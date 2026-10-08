@@ -637,12 +637,12 @@ function Index() {
         <div className="flex items-center gap-3">
           <div className="hidden sm:flex items-center gap-3 rounded-lg bg-white/[0.04] border border-white/10 px-3 py-1.5">
             <div className="text-center">
-              <div className="text-[10px] uppercase tracking-wider text-white/40">Win</div>
+              <div className="text-[10px] uppercase tracking-wider text-white/40">Vitórias</div>
               <div className="text-sm font-bold text-emerald-400 tabular-nums">{stats.wins}</div>
             </div>
             <div className="h-6 w-px bg-white/10" />
             <div className="text-center">
-              <div className="text-[10px] uppercase tracking-wider text-white/40">Loss</div>
+              <div className="text-[10px] uppercase tracking-wider text-white/40">Derrotas</div>
               <div className="text-sm font-bold text-red-400 tabular-nums">{stats.losses}</div>
             </div>
             <div className="h-6 w-px bg-white/10" />
