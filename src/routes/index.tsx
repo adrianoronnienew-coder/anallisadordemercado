@@ -1230,8 +1230,9 @@ function OutcomeBadge({ outcome, lesson }: { outcome: Outcome; lesson?: string }
 function HistoryRow({ row }: { row: SignalRow }) {
   const isCall = row.signal === "CALL";
   const isPut = row.signal === "PUT";
-  const isWait = row.signal === "AGUARDAR";
-  const color = isCall ? "text-emerald-400" : isPut ? "text-red-400" : "text-white/50";
+  const isWait = row.signal === "AGUARDAR" || row.signal === ("WAIT" as SignalKind);
+  const signalLabel = isWait ? "WAIT" : row.signal;
+  const color = isCall ? "text-emerald-400" : isPut ? "text-red-400" : "text-amber-300/80";
   const Icon = isCall ? TrendingUp : isPut ? TrendingDown : Minus;
   const time = new Date(row.ts).toLocaleTimeString("pt-BR", { hour12: false });
 
@@ -1249,7 +1250,7 @@ function HistoryRow({ row }: { row: SignalRow }) {
       <Icon className={`h-4 w-4 ${color}`} strokeWidth={2.5} />
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2">
-          <span className={`text-sm font-bold ${color}`}>{row.signal}</span>
+          <span className={`text-sm font-bold ${color}`}>{signalLabel}</span>
           <span className="text-xs text-white/40">{row.confidence}%</span>
           {outcomeDot && <span className={`h-2 w-2 rounded-full ${outcomeDot}`} />}
         </div>
