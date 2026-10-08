@@ -116,6 +116,19 @@
   50% { background-position: 100% 50%; }
   100% { background-position: 0% 50%; }
 }
+@keyframes icon-pulse-loop {
+  0%, 100% {
+    transform: scale(1);
+    filter: drop-shadow(0 0 8px rgba(34, 197, 94, 0.4));
+  }
+  50% {
+    transform: scale(1.08);
+    filter: drop-shadow(0 0 16px rgba(34, 197, 94, 0.8));
+  }
+}
+.animate-icon-loop {
+  animation: icon-pulse-loop 2s ease-in-out infinite;
+}
 .animate-signal-glow {
   animation: signal-glow 3s ease-in-out infinite;
 }

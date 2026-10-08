@@ -701,7 +701,7 @@ function Index() {
             {!sharing && (
               <div className="absolute inset-0 flex flex-col items-center justify-center gap-4 bg-gradient-to-br from-slate-900 to-black">
                 <div className="text-center max-w-md px-6">
-                  <div className="h-16 w-16 mx-auto rounded-2xl bg-gradient-to-br from-emerald-400 to-cyan-500 flex items-center justify-center mb-4">
+                  <div className="h-16 w-16 mx-auto rounded-2xl bg-gradient-to-br from-emerald-400 to-cyan-500 flex items-center justify-center mb-4 animate-pulse">
                     <Play className="h-7 w-7 text-black ml-1" fill="currentColor" />
                   </div>
                   <h2 className="text-2xl font-bold">Compartilhe sua tela</h2>
@@ -1190,7 +1190,7 @@ function BacktestPanel({ history, onClear }: { history: SignalRow[]; onClear: ()
         </div>
       </div>
       <div className="mt-4 grid grid-cols-3 gap-px border border-white/10 bg-white/10 sm:grid-cols-6">
-        {[['Operações', trades.length], ['WIN', wins], ['LOSS', losses], ['Taxa', `${rate}%`], ['CALL', callCount], ['PUT', putCount]].map(([label, value]) => (
+        {[["Operações", trades.length], ["WIN", wins], ["LOSS", losses], ["Taxa", `${rate}%`], ["CALL", callCount], ["PUT", putCount]].map(([label, value]) => (
           <div key={label} className="bg-[#0d121d] p-3 text-center"><div className="text-[10px] font-semibold uppercase text-white/40">{label}</div><div className="mt-1 text-lg font-black">{value}</div></div>
         ))}
       </div>
