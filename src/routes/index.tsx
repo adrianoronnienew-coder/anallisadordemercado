@@ -2,7 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useServerFn } from "@tanstack/react-start";
 import { Button } from "@/components/ui/button";
-import { portugueseText, signalLabel, outcomeLabel } from "@/lib/portuguese-text";
+import { portugueseText, signalLabel } from "@/lib/portuguese-text";
 import { analyzeFrame, evaluateOutcome } from "@/lib/analyze.functions";
 import {
   Play,
@@ -843,10 +843,6 @@ function Index() {
           )}
 
           <TechnicalPanel reading={current?.analysis} candidate={current?.candidateSignal} />
-          <BacktestPanel history={history} onClear={() => {
-            setHistory([]);
-            try { localStorage.removeItem(BACKTEST_KEY); } catch {}
-          }} />
         </section>
 
         <aside className="col-span-12 lg:col-span-4 space-y-4">
@@ -1151,52 +1147,6 @@ function TechnicalPanel({
         </>
       )}
     </div>
-  );
-}
-
-function BacktestPanel({ history, onClear }: { history: SignalRow[]; onClear: () => void }) {
-  const trades = history.filter((row) => row.signal !== "WAIT");
-  const wins = trades.filter((row) => row.outcome === "WIN").length;
-  const losses = trades.filter((row) => row.outcome === "LOSS").length;
-  const unknown = trades.filter((row) => row.outcome === "UNKNOWN" || !row.outcome).length;
-  const decided = wins + losses;
-  const rate = decided ? Math.round((wins / decided) * 100) : 0;
-  const callCount = trades.filter((row) => row.signal === "CALL").length;
-  const putCount = trades.filter((row) => row.signal === "PUT").length;
-
-  const exportCsv = () => {
-    const rows = [
-      ["horario", "sinal", "confianca", "expiracao_min", "resultado", "motivo"],
-      ...trades.map((row) => [new Date(row.ts).toISOString(), signalLabel(row.signal), row.confidence, row.expirationMinutes, outcomeLabel(row.outcome), portugueseText(row.reason)]),
-    ];
-    const csv = rows.map((row) => row.map((cell) => `"${String(cell).replaceAll('"', '""')}"`).join(",")).join("\n");
-    const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
-    const anchor = document.createElement("a");
-    anchor.href = url;
-    anchor.download = "visao-de-sinais-teste-da-sessao.csv";
-    anchor.click();
-    URL.revokeObjectURL(url);
-  };
-
-  return (
-    <section className="border border-white/10 bg-white/[0.03] p-4">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h2 className="text-sm font-bold">Teste da sessão</h2>
-          <p className="mt-0.5 text-xs text-white/45">Mede apenas sinais confirmados nesta tela; não é histórico de abertura, máxima, mínima e fechamento.</p>
-        </div>
-        <div className="flex gap-2">
-          <Button type="button" size="sm" variant="outline" disabled={!trades.length} onClick={exportCsv} className="border-white/10 bg-white/5 text-white hover:bg-white/10"><Download className="mr-2 h-4 w-4" /> Exportar planilha</Button>
-          <Button type="button" size="sm" variant="outline" disabled={!history.length} onClick={onClear} className="border-white/10 bg-white/5 text-white hover:bg-white/10">Limpar teste</Button>
-        </div>
-      </div>
-      <div className="mt-4 grid grid-cols-3 gap-px border border-white/10 bg-white/10 sm:grid-cols-6">
-        {[["Operações", trades.length], ["Vitórias", wins], ["Derrotas", losses], ["Taxa", `${rate}%`], ["Compras", callCount], ["Vendas", putCount]].map(([label, value]) => (
-          <div key={label} className="bg-[#0d121d] p-3 text-center"><div className="text-[10px] font-semibold uppercase text-white/40">{label}</div><div className="mt-1 text-lg font-black">{value}</div></div>
-        ))}
-      </div>
-      {unknown > 0 && <p className="mt-2 text-xs text-amber-300">{unknown} operação(ões) pendente(s) ou indefinida(s).</p>}
-    </section>
   );
 }
 
